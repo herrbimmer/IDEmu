@@ -16,8 +16,13 @@ head unit except EntryNav; it can be changed in the coding editor). Without it t
   (pinch / spread). Add **Shift** (also during a drag) to keep the distance between the two and move both together; releasing Shift goes
   back to the mirror. Hovering with Alt/Ctrl shows where the two fingers would land.
 * **Handwriting:** in a speller (e.g. the POI keyword search) write one character at a time with one finger. 0.7 s after the last
-  stroke IDEmu reads it and the HMI enters it, as with the real controller. Needs `bin/hwr`: build it once with `tools/hwr/build.sh`
-  (macOS 14+, uses the system's Vision framework).
+  stroke IDEmu reads it and the HMI enters it, as with the real controller. The recognizer is `bin/hwr` (macOS 14+, the system's
+  Vision framework): IDEmu builds it with `tools/hwr/build.sh` the first time the pad is used, and again when `tools/hwr/hwr.m`
+  changes. Where Vision is missing (not macOS, no clang or no SDK with Vision) nothing is built and the log says so once; the
+  strokes still reach the HMI as touchpad input, but no character is entered.
+* **Placeholder without a recognizer** (for testing the MOST path, off by default): start IDEmu with `IDEMU_HWR_FALLBACK=A` and
+  every handwritten character is sent as `A`, whatever was drawn (the log marks it as a placeholder). It must be a character class the
+  speller wants (digits-only spellers ignore `A`).
 * API: `POST /api/input/touchpad {x, y, down, move, x2, y2}`. `x`, `y` from 0 to 1 (top left = 0, 0); `down: true` touches,
   `move: true` moves, `down: false` lifts; `x2`, `y2` add a second finger. iDrive 5/6 only (501 on other generations).
 
@@ -81,4 +86,4 @@ country entry does not open in IDEmu (no map database), so the address spellers 
 
 * No gesture emulation at the `CccsGestureRecognition` level (see above): screens that only react to recognised controller gestures
   (e.g. map pinch through the controller) do not get them.
-* Handwriting needs macOS (Vision); on other hosts `bin/hwr` is missing and the strokes are only passed on as touches.
+* Handwriting needs macOS (Vision); on other hosts the strokes are only passed on as touches (or as the `IDEMU_HWR_FALLBACK` placeholder).

@@ -49,6 +49,75 @@ class BridgeTest(unittest.TestCase):
         self.assertFalse(h.active())
 
 
+class NoRecognizerTest(unittest.TestCase):
+    """Where bin/hwr cannot be built (no macOS Vision): nothing is entered unless IDEMU_HWR_FALLBACK names a placeholder."""
+    def setUp(self):
+        from unittest import mock
+        self.patches = [mock.patch.object(hwr, 'HWR_BIN', '/nonexistent/hwr'), mock.patch.object(hwr.sys, 'platform', 'linux'),
+                        mock.patch.dict(os.environ, {}, clear=False)]
+        for p in self.patches: p.start()
+        os.environ.pop(hwr.FALLBACK_ENV, None)
+
+    def tearDown(self):
+        for p in reversed(self.patches): p.stop()
+
+    def bridge(self, classes=0x0F):
+        class B(object):
+            ccs_touch_control = bytes([3, classes, 2, 0, 0, 0, 0, 1])
+            subs = {(0xE5, 1): {hwr.F_CHARREC2: 0x100}}
+            def __init__(self): self.sent = []
+            def publish(self, fblock, fkt, data, inst=1): self.sent.append((fblock, fkt, data, inst))
+        return B()
+
+    def write(self, b):
+        logs = []; h = hwr.Handwriting(b, logs.append)
+        for st, x, y in ((1, .3, .2), (2, .5, .8), (3, .7, .2)): h.touch(x, y, st)
+        h.timer.cancel(); h._done()
+        return logs
+
+    def test_not_built_off_macos(self):
+        from unittest import mock
+        with mock.patch.object(hwr.subprocess, 'run') as run:
+            self.assertIsNone(hwr.ensure_bin())
+            run.assert_not_called()
+
+    def test_nothing_sent_without_fallback(self):
+        b = self.bridge(); logs = self.write(b)
+        self.assertEqual(b.sent, [])
+        self.assertIn('no recognizer', logs[-1])
+
+    def test_placeholder(self):
+        os.environ[hwr.FALLBACK_ENV] = 'A'
+        b = self.bridge(); logs = self.write(b)
+        self.assertEqual([(f, k, d.hex()) for f, k, d, _ in b.sent], [(0xE5, hwr.F_CHARREC2, '01006400410000000000')])
+        self.assertIn('placeholder', logs[-1])
+
+    def test_placeholder_class_not_wanted(self):
+        os.environ[hwr.FALLBACK_ENV] = 'A'
+        b = self.bridge(classes=0x01); self.write(b)          # digits only
+        self.assertEqual(b.sent, [])
+
+
+class AutoBuildTest(unittest.TestCase):
+    def test_builds_once_when_missing(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            exe = os.path.join(d, 'hwr')
+            def run(cmd, **kw):
+                open(exe, 'w').close()
+                return mock.Mock(stdout=b'built bin/hwr\n', stderr=b'', returncode=0)
+            with mock.patch.object(hwr, 'HWR_BIN', exe), mock.patch.object(hwr.sys, 'platform', 'darwin'), \
+                 mock.patch.object(hwr, '_build_tried', False), mock.patch.object(hwr.subprocess, 'run', side_effect=run) as r:
+                logs = []
+                self.assertEqual(hwr.ensure_bin(logs.append), exe)
+                self.assertEqual(r.call_args[0][0], ['zsh', hwr.HWR_BUILD])
+                self.assertEqual(logs, ['handwriting: built bin/hwr'])
+                os.utime(exe, (0, 0))                              # older than hwr.m: stale, but rebuilt only once per process
+                self.assertEqual(hwr.ensure_bin(), exe)
+                self.assertEqual(r.call_count, 1)
+
+
 @unittest.skipUnless(os.path.isfile(hwr.HWR_BIN), 'bin/hwr not built (tools/hwr/build.sh)')
 class RecogniseTest(unittest.TestCase):
     def test_letters(self):
