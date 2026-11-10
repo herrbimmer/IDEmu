@@ -148,7 +148,9 @@ def make_boot_ifs(boot1_ifs, tools):
     img = decompress(boot1_ifs)
     unc = make_uncompressed(boot1_ifs, img)
     v, ss = _hdr(unc)
-    replace_bytes(unc, LOGIN_OLD, LOGIN_NEW)
+    # Older NBT Evo releases already start `ksh -li` on the console and have no login entry to swap.
+    if LOGIN_OLD in unc or b'/boot/bin/ksh\0ksh\0' not in unc:
+        replace_bytes(unc, LOGIN_OLD, LOGIN_NEW)
     speed_up_script(unc)
     fix_checksum(unc, 8 + ss)
     return add_files(bytes(unc), tools)

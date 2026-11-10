@@ -2,7 +2,7 @@
 import os, re, subprocess, json, time, shutil, threading, traceback, mimetypes, datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
-from . import catalog, builder, runtime, codegen, coding, coding7, coding8, stats, mgu, mgu7, phone, cluster, cic, vin, sysfiles
+from . import catalog, builder, runtime, codegen, coding, coding7, coding8, stats, mgu, mgu7, phone, cluster, carplay, cic, vin, sysfiles
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENVS = os.path.join(ROOT, 'environments')
@@ -672,6 +672,25 @@ class H(BaseHTTPRequestHandler):
             if getattr(rt, 'kind', None) or not getattr(rt, 'can', None): raise ApiError('o cluster e o HUD só existem no iDrive 5 e 6 em execução', 409)
             v = getattr(rt, 'v850', None)
             return cluster.snapshot(rt.can, getattr(rt, 'gps', None), v.bridge if v else None)
+        if path == 'carplay':                            # CarPlay (iDrive 5/6): iPhone falso pelo MOST virtual (idemu/carplay.py)
+            fl = A.flash_status(A.rt.id) if A.rt else {'state': 'idle'}
+            if fl.get('state') == 'running':             # "Configurar CarPlay" reinicia a head unit: o progresso vem antes de exigir o ambiente rodando
+                return {'state': 'off', 'step': '', 'error': None, 'name': carplay.NAME, 'show_keys': False, 'missing': [], 'flash': fl}
+            rt = A.need_rt(); v = getattr(rt, 'v850', None)
+            if getattr(rt, 'kind', None) or not v: raise ApiError('o CarPlay só existe no iDrive 5 e 6 em execução', 409)
+            fake = getattr(rt, 'fake_iphone', None)
+            if fake is None or fake.bridge is not v.bridge: fake = rt.fake_iphone = carplay.FakeIPhone(v.bridge, rt.ctl)
+            missing = carplay.setup_missing(rt.env)
+            if m == 'POST' and d.get('setup'):           # liga o CarPlay no ambiente: conn + variantes, CARPLAY_SWT pela gravação de codificação (reinicia a head unit)
+                if not missing: raise ApiError('o CarPlay já está configurado neste ambiente')
+                env = A.load_env(rt.id); A.save_env(carplay.setup_env(env))
+                A.flash(rt.id, dict(carplay.CODING), 'Before CarPlay setup (CarPlay tab)')
+                return dict(fake.status(), missing=missing, flash=A.flash_status(rt.id))
+            if m == 'POST' and 'show_keys' in d: fake.show_keys(d['show_keys'])
+            if m == 'POST' and d.get('fake_iphone') and missing:
+                raise ApiError('o CarPlay não está configurado neste ambiente: use "Configurar CarPlay" primeiro', 409)
+            if m == 'POST' and 'fake_iphone' in d: return dict(fake.set(bool(d['fake_iphone'])), missing=missing, flash=A.flash_status(rt.id))
+            return dict(fake.status(), missing=missing, flash=A.flash_status(rt.id))
         if path == 'v850/seen':                          # depuração: últimas mensagens Set/Get do HMI por (FBlock, instância, função)
             rt = A.need_rt(); v = getattr(rt, 'v850', None)
             if not v: raise ApiError('V850 virtual indisponível', 409)
