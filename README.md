@@ -51,6 +51,16 @@ New environment → iDrive version → car model → required files → paramete
 * **Coding editor**: parameters with their factory values from the firmware, backups, import/export, flash and verified restart.
 * **Fast boot**: the booted state is saved and restored in about a second (iDrive 5, 6 and 7).
 * **Tools**: SSH into the head unit, phone link over Wi-Fi, V850 firmware viewer, live statistics (CPU, RAM, GPU, FPS).
+* **CarPlay** (iDrive 5/6): a fake iPhone brings up the HMI's real CarPlay screens, with a video placeholder and a key code list (CarPlay tab, `docs/CARPLAY.md`).
+
+## Other NBT Evo HMI builds
+
+The guest shim hooks `HmiMain3D` (a stripped executable) at fixed addresses. The shim has a built-in table for one validated HMI build. For
+every build, the builder finds the addresses in the extracted `HmiMain3D` itself (`idemu/hmiscan.py`): each hook is described in
+`idemu/data/hmi_hooks.json` by how to find it (a dynamic symbol, a section, or the first instructions of its function with build-specific
+immediates masked out), never by its address. The result goes to `/fs/shim/hmi_addr.tab`. A hook that is not found, or not found uniquely, is
+switched off instead of jumping into the wrong code, so the HMI still boots; the build log lists them. Environments built before this
+need a rebuild.
 
 ## Repository map
 

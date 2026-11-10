@@ -279,7 +279,7 @@
     window.addEventListener('blur', onBlur);
 
     /* ---------- abas ---------- */
-    const TABS = [['can', 'CAN', 'activity'], ['cluster', 'Cluster e HUD', 'gauge'], ['gps', 'GPS', 'pin'], ['map', 'Mapa', 'pin'], ['ssh', 'SSH', 'terminal'], ['phone', 'Celular', 'phone'], ['v850', 'V850', 'activity'], ['logs', 'Logs', 'file']];
+    const TABS = [['can', 'CAN', 'activity'], ['cluster', 'Cluster e HUD', 'gauge'], ['carplay', 'CarPlay', 'disc'], ['gps', 'GPS', 'pin'], ['map', 'Mapa', 'pin'], ['ssh', 'SSH', 'terminal'], ['phone', 'Celular', 'phone'], ['v850', 'V850', 'activity'], ['logs', 'Logs', 'file']];
     const ctx = { status: () => R.status, running: () => !!(R.status && R.status.state === 'running'), booted: () => !!(R.status && (R.status.state === 'running' || R.status.state === 'booting')) };
     function selectTab(id, persist = true) {
       if (R.activeTab && R.tabs[R.activeTab]) { R.tabs[R.activeTab].api.hide(); R.tabs[R.activeTab].host.hidden = true; }
@@ -287,8 +287,13 @@
       let t = R.tabs[id];
       if (!t) { const host = h('div', { class: 'tab-host' }); tabBody.appendChild(host); t = R.tabs[id] = { host, api: IDE.tabDefs[id].mount(host, ctx) }; }
       t.host.hidden = false; t.api.show(); if (R.status && t.api.onStatus) t.api.onStatus(R.status);
-      tabBar.querySelectorAll('button').forEach((b) => { const on = b.dataset.tab === id; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
+      tabBar.querySelectorAll('button').forEach((b) => { const on = b.dataset.tab === id; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); if (on) b.scrollIntoView({ block: 'nearest', inline: 'nearest' }); });
     }
+    // a barra de abas rola na horizontal: a roda vertical do mouse também a rola
+    tabBar.addEventListener('wheel', (e) => {
+      if (tabBar.scrollWidth <= tabBar.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault(); tabBar.scrollBy({ left: e.deltaY, behavior: 'auto' });
+    }, { passive: false });
     TABS.forEach(([id, label, icon]) => tabBar.appendChild(h('button', { class: 'tab', role: 'tab', type: 'button', 'data-tab': id, onclick: () => selectTab(id) }, ic(icon, 16), label)));
     selectTab(IDE.pref.get('run.tab', 'can') in IDE.tabDefs ? IDE.pref.get('run.tab', 'can') : 'can');
 
@@ -324,9 +329,12 @@
       codingLink.style.display = s.kind === 'cic' ? 'none' : '';
       if (s.kind === 'cic' && img.width) dispSize.textContent = IDE.t('{w} × {h} · sem tela de toque (use o controlador)', { w: img.width, h: img.height });      // o iDrive 7 tem o editor de codificação
       bootNote.textContent = IDE.t(s.kind === 'cic' ? 'O boot do CIC leva cerca de 1 minuto (emulação SH-4 sem aceleração).' : s.kind === 'mgu7' ? 'O primeiro boot do iDrive 7 leva cerca de 2 minutos (emulação x86 sem aceleração); os seguintes, cerca de 1 segundo.' : mgu ? 'O boot do iDrive 8 leva cerca de 1 minuto.' : 'O primeiro boot leva cerca de 45 segundos; os seguintes, cerca de 1 segundo.') + ' ';
-      const shown = (t) => !mgu || t === 'logs' || t === 'phone' || (t === 'ssh' && (s.kind === 'cic' || s.kind === 'mgu7')) || (t === 'gps' && s.kind === 'cic');      // SSH: o CIC (ksh do QNX) e o iDrive 7 (shell do guest) têm console; GPS: o CIC tem um receptor ANTARIS virtual
+      const carplayOk = !mgu && !!s.env && (s.state === 'running' || s.state === 'booting');      // CarPlay: só iDrive 5/6 (NBT Evo) em execução
+      const shown = (t) => t === 'carplay' ? carplayOk : !mgu || t === 'logs' || t === 'phone' || (t === 'ssh' && (s.kind === 'cic' || s.kind === 'mgu7')) || (t === 'gps' && s.kind === 'cic');      // SSH: o CIC (ksh do QNX) e o iDrive 7 (shell do guest) têm console; GPS: o CIC tem um receptor ANTARIS virtual
       tabBar.querySelectorAll('button').forEach((b) => { b.style.display = shown(b.dataset.tab) ? '' : 'none'; });
-      if (mgu && !shown(R.activeTab)) selectTab('logs', false);
+      const want = IDE.pref.get('run.tab', 'can');      // a aba preferida volta quando reaparece (ex.: CarPlay durante o reinício da head unit)
+      if (!shown(R.activeTab)) selectTab(mgu ? 'logs' : 'can', false);
+      else if (R.activeTab !== want && want in IDE.tabDefs && shown(want)) selectTab(want, false);
       const env = s.env ? IDE.envById(s.env) : null;
       const envSig = env ? env.id + '|' + env.name + '|' + env.chassis : String(s.env);
       if (barEnv.dataset.sig !== envSig) {           // o status chega 4 vezes por segundo no boot: só refaz o cabeçalho quando o ambiente muda

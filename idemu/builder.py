@@ -188,22 +188,56 @@ def build(env, env_dir, log=print, progress=lambda pct, step: None):
     mkq6.build(root, tpl, os.path.join(img_dir, 'sdb.img'))
     os.unlink(tpl)
     progress(80, 'Disco de dados pronto')
-    # 5) shim.img
-    progress(82, 'Montando camada de tradução (shim)')
-    build_shim(env, istep['os'], os.path.join(img_dir, 'shim.img'), log)
-    # 6) assinatura do HMI + manifesto
+    # 5) assinatura do HMI e endereços dos hooks do shim, procurados no próprio HmiMain3D (idemu/hmiscan.py)
     hm = tree.get('opt/hmi/ID5/bin/HmiMain3D')
     manifest['hmi_sha256'] = sha256_file(hm) if hm else None
     known = json.load(open(os.path.join(HERE, 'data', 'known_hmi.json')))
     manifest['hmi_validated'] = manifest['hmi_sha256'] in known.get('validated', [])
-    if not manifest['hmi_validated']:
-        log('AVISO: este HmiMain3D não é uma das versões validadas; os patches em memória do shim podem falhar.')
+    tabp = os.path.join(img_dir, HMI_ADDR_FILE)
+    if os.path.exists(tabp): os.unlink(tabp)
+    if hm:
+        progress(81, 'Procurando os pontos de hook no HMI')
+        found = hmi_scan(hm, log)
+        if manifest['hmi_validated']:                  # tabela embutida do shim + o que ela não tem (ativação do CarPlay)
+            extra = {n: found[n] for n in HMI_ADDR_OVERLAY if found.get(n)}
+            if len(extra) == len(HMI_ADDR_OVERLAY): open(tabp, 'wb').write(hmi_addr_table(extra, full=False))
+        else: open(tabp, 'wb').write(hmi_addr_table(found))
+        manifest['hmi_hooks'] = len(found)
+    # 6) shim.img
+    progress(82, 'Montando camada de tradução (shim)')
+    build_shim(env, istep['os'], os.path.join(img_dir, 'shim.img'), log)
     manifest['images'] = {n: os.path.getsize(os.path.join(img_dir, n)) for n in ('boot.ifs', 'sda.img', 'sdb.img', 'shim.img')}
     manifest['seconds'] = round(time.time() - t0, 1)
     json.dump(manifest, open(os.path.join(env_dir, 'build.json'), 'w'), indent=1)
     shutil.rmtree(work, ignore_errors=True)
     progress(100, 'Pronto')
     return manifest
+
+# Endereços no HmiMain3D usados por src/shim/hook.c, na ordem do enum HA_* de lá (o índice vai no arquivo).
+HMI_ADDR_NAMES = ['SETPOWER', 'CTRLEV_NEW', 'REDIR_PTR', 'REDIR_NOTIFY', 'TDC_C1', 'TDC_C2', 'TDC_GOT', 'TDC_K', 'TOUCH_SRCMAP', 'EDS', 'EDS2',
+                  'GESTURE_FN', 'TOUCHDATA_CTOR', 'SPCB_VT', 'FWD_TOUCH', 'HOME_SET', 'DBG_OBJ', 'DBG_HANDLER', 'KEYEV', 'CTRL_GROUP', 'MAPSURF',
+                  'UNMAPSURF', 'LUA_ERR', 'HOME_STC', 'PMD', 'PM', 'TPM_UPDATE', 'TPM_TIMER', 'CTRLEV_NEW2', 'CTRLEV_CTOR', 'OPNEW', 'DISP_INIT', 'DISP_F1', 'DISP_F2', 'DISP_ENABLE', 'DISP_ON',
+                  'SWT_INIT', 'SWT_CP']
+HMI_ADDR_OVERLAY = ('SWT_INIT', 'SWT_CP')    # HMI validado: só estes vão por cima da tabela embutida do shim (que não os tem)
+HMI_ADDR_FILE = 'hmi_addr.tab'        # em images/, ao lado do shim.img: gerado no build, reaproveitado por cada shim refeito (gravação de codificação)
+
+def hmi_scan(hm, log=print):
+    """Endereços dos hooks neste HmiMain3D, achados pelo código (idemu/data/hmi_hooks.json); os não achados ficam desligados."""
+    from . import hmiscan
+    miss = []
+    found = hmiscan.scan(hm, log=lambda n, why: miss.append('%s (%s)' % (n, why)))
+    bad = sorted(set(found) - set(HMI_ADDR_NAMES))
+    if bad: raise BuildError('hmi_hooks.json: nomes desconhecidos: %s' % ', '.join(bad))
+    off = [n for n in HMI_ADDR_NAMES if not found.get(n)]
+    log('hooks do HMI: %d de %d endereços achados no HmiMain3D%s' % (len(HMI_ADDR_NAMES) - len(off), len(HMI_ADDR_NAMES),
+        ('; desligados: ' + ', '.join(off)) if off else ''))
+    if miss: log('  não achados: ' + ', '.join(miss))
+    return found
+
+def hmi_addr_table(found, full=True):
+    """/fs/shim/hmi_addr.tab: pares u32 LE (índice, endereço); endereço 0 desliga o hook ou o recurso que depende dele.
+    full: todos os índices (o shim troca a tabela embutida); senão só os achados (o shim os põe por cima da embutida)."""
+    return b''.join(struct.pack('<II', i, found.get(n, 0)) for i, n in enumerate(HMI_ADDR_NAMES) if full or found.get(n))
 
 def build_shim(env, os_istep, out, log=print):
     t = mkdisk.Tree()
@@ -219,6 +253,18 @@ def build_shim(env, os_istep, out, log=print):
     # variantes internas forçadas (id -> 0/1): o shim lê /fs/shim/variants.bin (u32 LE: id | valor << 31)
     vt = b''.join(struct.pack('<I', (int(k, 0) & 0xffff) | (int(bool(v)) << 31)) for k, v in sorted((env.get('variants') or {}).items()))
     if vt: t.add('/variants.bin', 0o100644, vt, len(vt))
+    # endereços dos hooks no HmiMain3D (achados no build, images/hmi_addr.tab); sem o arquivo o shim usa a tabela embutida (HMI validado)
+    img = os.path.dirname(os.path.abspath(out)); tabp = os.path.join(img, HMI_ADDR_FILE)
+    if os.path.isfile(tabp):
+        at = open(tabp, 'rb').read(); t.add('/hmi_addr.tab', 0o100644, at, len(at))
+    else:
+        try: bj = json.load(open(os.path.join(os.path.dirname(img), 'build.json')))
+        except (OSError, ValueError): bj = {}
+        if bj and not bj.get('hmi_validated'):        # compilado antes da busca de endereços: hooks desligados até recompilar
+            log('AVISO: ambiente compilado sem a busca de endereços do HMI: recompile-o (os hooks do shim ficam desligados)')
+            at = hmi_addr_table({}); t.add('/hmi_addr.tab', 0o100644, at, len(at))
+    # CarPlay ativado (env "conn"): o shim marca a ativação de software (SWT) do CarPlay, que no carro vem do servidor SWT (idemu/carplay.py)
+    if env.get('conn'): t.add('/carplay.on', 0o100644, b'1', 1)
     # serviços: números do starter.cfg do próprio SWFL
     cfg = open(os.path.join(os_istep, 'opt/sys/etc/starter.cfg'), errors='replace').read()
     procs = []

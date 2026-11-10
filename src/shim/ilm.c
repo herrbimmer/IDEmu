@@ -18,21 +18,26 @@ static void map_sync(void){ static U last[5]; U v[5]={0,0,0,0,0}; for(int i=0;i<
    ficava bloqueada (mapa preto ao voltar do menu OPTION). O aviso vai na volta seguinte do laço principal (src/shim/hook.c): em outro thread derruba o HMI, que usa estado por thread nesse caminho. */
 extern void (*ilm_main_cb)(void); extern volatile int ilm_main_want;
 static void ilm_deliver(void){ for(int i=0;i<nlay;i++) if(lay[i].pending==2){ lay[i].pending=0; fire(&lay[i],2); } }   /* 2 = ILM_NOTIFICATION_VISIBILITY */
-int ilm_commitChanges(void){ int any=0; for(int i=0;i<nlay;i++) if(lay[i].pending){ lay[i].pending=2; any=1; } map_sync(); if(any){ ilm_main_cb=ilm_deliver; ilm_main_want=1; } return 0; }
+/* Projected video (CarPlay: the HMI puts Connectivity's screen window, surface 0x500, in its layer 0x800d0000): in IDEmu nothing
+   renders that window, so the host draws a placeholder in the layer's destination rectangle, under the HMI (src/glhost/map.c). */
+static int is_video_surface(U id){ return id==0x500; }
+static void video_sync(void){ static U last[5]; U v[5]={0,0,0,0,0}; for(int i=0;i<nlay;i++){ lay_t*l=&lay[i]; if(!l->surf||!is_video_surface(l->surf)) continue; if(l->vis&&l->dw&&l->dh){ v[0]=1; v[1]=l->dx; v[2]=l->dy; v[3]=l->dw; v[4]=l->dh; } }
+  if(memcmp(v,last,sizeof v)){ memcpy(last,v,sizeof v); u32*p; LOCK(); p=br_begin(OP_VIDLAYER,5); memcpy(p,v,sizeof v); UNLOCK(); br_logx("ilm: camada de video",v[0],(v[1]&0xffff)|(v[2]<<16),(v[3]&0xffff)|(v[4]<<16)); } }
+int ilm_commitChanges(void){ int any=0; for(int i=0;i<nlay;i++) if(lay[i].pending){ lay[i].pending=2; any=1; } map_sync(); video_sync(); if(any){ ilm_main_cb=ilm_deliver; ilm_main_want=1; } return 0; }
 int ilm_layerSetVisibility(U id,u8 v){ lay_t*l=get(id); br_logx("ilm: layerSetVisibility",id,v,0); l->vis=v; l->pending=1; return 0; }
 int ilm_layerGetVisibility(U id,u8 *v){ if(v)*v=get(id)->vis; return 0; }
 int ilm_layerSetOpacity(U id,float o){ get(id)->opacity=o; return 0; }
 int ilm_layerAddNotification(U id,notif_t cb){ lay_t*l=get(id); l->cb=cb; br_logx("ilm: addNotification",id,(U)cb,l->vis); l->pending=1; return 0; }
 OK(ilm_init) OK(ilm_destroy) OK(ilm_displaySetRenderOrder)
 int ilm_layerAddSurface(U id,U s){ br_logx("ilm: ilm_layerAddSurface",id,s,0); if(is_map_surface(s)||!get(id)->surf) get(id)->surf=s; return 0; }
-int ilm_layerSetDestinationRectangle(U id,U x,U y,U w,U h){ lay_t*l=get(id); l->dx=x; l->dy=y; l->dw=w; l->dh=h; return 0; }
-OK(ilm_layerSetRenderOrder) OK(ilm_layerSetSourceRectangle)
+int ilm_layerSetDestinationRectangle(U id,U x,U y,U w,U h){ lay_t*l=get(id); if(l->dx!=x||l->dy!=y||l->dw!=w||l->dh!=h) br_logx("ilm: layerDest id/x|y<<16/w|h<<16",id,(x&0xffff)|(y<<16),(w&0xffff)|(h<<16)); l->dx=x; l->dy=y; l->dw=w; l->dh=h; return 0; }
+OK(ilm_layerSetRenderOrder) int ilm_layerSetSourceRectangle(U id,U x,U y,U w,U h){ br_logx("ilm: layerSrc id/x|y<<16/w|h<<16",id,(x&0xffff)|(y<<16),(w&0xffff)|(h<<16)); return 0; }
 OK(ilm_surfaceSetSourceRectangle)
 int ilm_startSurfaceRedirect(U id,void *ev){ srf[sidx(id)].redir=1; return 0; }
 int ilm_stopSurfaceRedirect(U id){ srf[sidx(id)].redir=0; if(is_map_surface(id)) map_sync(); /* com a superfície travada, o HMI só para o redirecionamento depois do último commit */ return 0; }
 int ilm_surfaceSetVisibility(U id,u8 v){ srf[sidx(id)].vis=v; if(is_map_surface(id)) map_sync(); /* às vezes não vem commit depois disto */ return 0; }
 /* o HMI confere o tamanho da superficie antes de redireciona-la */
-int ilm_surfaceSetDestinationRectangle(U id,U x,U y,U w,U h){ int k=sidx(id); srf[k].w=w; srf[k].h=h; return 0; }
+int ilm_surfaceSetDestinationRectangle(U id,U x,U y,U w,U h){ int k=sidx(id); if(srf[k].w!=w||srf[k].h!=h) br_logx("ilm: surfaceDest id/x|y<<16/w|h<<16",id,(x&0xffff)|(y<<16),(w&0xffff)|(h<<16)); srf[k].w=w; srf[k].h=h; return 0; }
 int ilm_layerCreateWithDimension(U *id,U w,U h){ if(*id==0xffffffff||*id==0) *id=next_layer++; get(*id); br_logx("ilm: layerCreate",*id,w,h); return 0; }
 static int lst(int *n,U **ids,U cnt){ U *p=(U*)malloc((cnt+1)*4); for(U i=0;i<cnt;i++) p[i]=lay[i].id; *n=cnt; *ids=p; return 0; }
 int ilm_getLayerIDs(int *n,U **ids){ return lst(n,ids,nlay); }

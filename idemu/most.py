@@ -199,6 +199,59 @@ class MostBridge(object):
             (self.PHONE_DEVICES if os.environ.get('IDEMU_PHONE_DEVICES', '1') != '0' else ()) if sel == 'core' else ()
         self.register_devices(devs)
 
+    # HMI -> CarPlay (AuxiliaryInput 0x24, instance 0x70): every CarPlayControllerInput (0xCD3) and CarPlayTouchInput (0xCD5, touch on
+    # the screen) is listed on the CarPlay video (glhost, "V k <text>" on <ctl>/input.sock): raw bytes + decoded ("Show keystrokes").
+    CARPLAY_KEYS = (0xcd3, 0xcd5)
+    ctl = None
+    _cpsock = None
+
+    def carplay_forward(self, m):
+        if m.func == 0xcd3: self.carplay_keylog(self.carplay_key_text(bytes(m.data), self._next_key()))
+        if m.func == 0xcd5: self.carplay_keylog(self.carplay_touch_text(bytes(m.data), self._next_key()))
+
+    CTRL_FIELDS = ('press', 'back', 'up', 'down', 'left', 'right', 'voice')
+    _keyn = 0
+
+    @classmethod
+    def carplay_key_text(cls, d, n=0):
+        """'#n  01 00 00 00 00 00 00 00  rot +1 press' (bytes: rotation 1..126 clockwise / 128.. counter-clockwise, then the 7 keys)"""
+        hx = ' '.join('%02x' % b for b in d[:8])
+        if len(d) < 8: return '#%d  %s  (short: %d bytes)' % (n, hx, len(d))
+        r = 0 if d[0] == 0 else d[0] if d[0] < 128 else -(d[0] - 127)
+        on = (['rot %+d' % r] if r else []) + [k for k, v in zip(cls.CTRL_FIELDS, d[1:8]) if v]
+        return '#%d  %s  %s' % (n, hx, ' '.join(on) or 'released')
+
+    TOUCH_STATES = ('down', 'move', 'up')
+
+    @classmethod
+    def carplay_touch_text(cls, d, n=0):
+        """'#n  touch 00 01 00c8 0064 1e 00  200,100 down': CarPlayTouchInput = u8 type (0 = screen), u8 count, then per finger u16 x,
+        u16 y (display pixels), u8 z, u8 state (0 down, 1 move, 2 up) (CCarPlayActivity::handleTouchInput, "On screen: touch= type= ...")"""
+        if len(d) < 2: return '#%d  touch %s  (short)' % (n, ' '.join('%02x' % b for b in d))
+        hx, out, i = '%02x %02x' % (d[0], d[1]), [], 2
+        for _ in range(d[1]):
+            r = d[i:i + 6]; i += 6
+            if len(r) < 6: out.append('(short)'); break
+            x, y = r[0] << 8 | r[1], r[2] << 8 | r[3]
+            hx += ' %04x %04x %02x %02x' % (x, y, r[4], r[5])
+            out.append('%d,%d %s' % (x, y, cls.TOUCH_STATES[r[5]] if r[5] < 3 else 'state %d' % r[5]))
+        return '#%d  touch %s  %s' % (n, hx, '; '.join(out) or 'no fingers')
+
+    def _next_key(self):
+        self._keyn += 1
+        return self._keyn
+
+    carplay_keys = False     # "Show keystrokes" in the CarPlay tab (idemu/carplay.py); off by default: nothing listed
+
+    def carplay_keylog(self, text):
+        import os, socket
+        if not self.carplay_keys or not self.ctl: return
+        try:
+            if self._cpsock is None: self._cpsock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            self._cpsock.sendto(('V k ' + text).encode()[:120], os.path.join(self.ctl, 'input.sock'))
+        except OSError:
+            pass                    # glhost not running
+
     RETRY_ACK_S = 30.0       # intervalo mínimo entre acks de Notification de uma propriedade sem valor conhecido
 
     def on_most(self, m):
@@ -209,6 +262,7 @@ class MostBridge(object):
             import time as _t
             sk = (m.fblock, m.inst, m.func); old = self.seen.get(sk)
             self.seen[sk] = {'op': m.op, 'data': bytes(m.data), 't': _t.time(), 'n': (old['n'] if old else 0) + 1}
+            if (m.fblock, m.inst) == (0x24, 0x70) and m.func in self.CARPLAY_KEYS: self.carplay_forward(m)
         if m.func == 1 and m.op == MostMessage.OP_SET and len(m.data) == 5 and m.data[0] == 1:      # FktID 0x001 = Notification
             fkt = _st.unpack('>H', m.data[3:5])[0]
             self.subs.setdefault((m.fblock, m.inst), {})[fkt] = _st.unpack('>H', m.data[1:3])[0]     # fkt -> dispositivo ouvinte
@@ -246,6 +300,18 @@ class MostBridge(object):
         if dev is not None:
             self.send_most(MostMessage(dev, getattr(self, 'device_id', 0x2002), fblock, inst, fkt, MostMessage.OP_STATUS, data)); n = 1
         return n
+
+    def push(self, fblock, fkt, data, inst=1, op=None):
+        """Like publish, but also for a property nobody subscribed to yet: sends to the device that subscribed to any function of the
+        same (FBlock, instance), or to the HMI's device. Used to play a device the HMI does not know yet (idemu/carplay.py)."""
+        subs = self.subs.get((fblock, inst), {})
+        dev = subs.get(fkt) or next(iter(subs.values()), None) or getattr(self, 'hmi_dev', None)
+        if dev is None:
+            for v in self.subs.values():
+                if v: dev = next(iter(v.values())); break
+        if dev is None: return 0
+        self.send_most(MostMessage(dev, getattr(self, 'device_id', 0x2002), fblock, inst, fkt, MostMessage.OP_STATUS if op is None else op, data))
+        return 1
 
     def send(self, msgid, payload=b'', cf=0xffff, b0=1, coalesce=None):
         import struct

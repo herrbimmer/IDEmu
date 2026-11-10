@@ -77,4 +77,5 @@ enum {
   OP_GETINPUT = 76,
   OP_MAPBIND = 77,
   OP_MAPLAYER = 78,
+  OP_VIDLAYER = 79,
 };

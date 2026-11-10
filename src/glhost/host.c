@@ -114,7 +114,7 @@ static int gltrace; static u32 nswaps;
 static u32 inq[1024*4]; static u32 inq_n;
 static void input_ev(u32 type,u32 code,u32 val,u32 unit){ if(inq_n>=1024) return; u32*e=inq+inq_n*4; e[0]=type;e[1]=code;e[2]=val;e[3]=unit; inq_n++; }
 static void map_cmd(const char *l);
-static void input_line(const char *l){ u32 t,c,v,u=0xffff; if(l[0]=='M'&&l[1]==' '){ map_cmd(l); return; } if(sscanf(l,"%u %u %d %u",&t,&c,(int*)&v,&u)>=3){ if(t==100) on_mouse(GLUT_LEFT_BUTTON,GLUT_DOWN,c,v); else if(t==101) on_mouse(GLUT_LEFT_BUTTON,GLUT_UP,c,v); else if(t==102) on_motion(c,v); else if(t==103) on_key((unsigned char)c,0,0); else if(t==104) on_keyup((unsigned char)c,0,0); else if(t==105) on_special(c,0,0); else input_ev(t,c,v,u); } }
+static void input_line(const char *l){ u32 t,c,v,u=0xffff; if((l[0]=='M'||l[0]=='V')&&l[1]==' '){ map_cmd(l); return; } if(sscanf(l,"%u %u %d %u",&t,&c,(int*)&v,&u)>=3){ if(t==100) on_mouse(GLUT_LEFT_BUTTON,GLUT_DOWN,c,v); else if(t==101) on_mouse(GLUT_LEFT_BUTTON,GLUT_UP,c,v); else if(t==102) on_motion(c,v); else if(t==103) on_key((unsigned char)c,0,0); else if(t==104) on_keyup((unsigned char)c,0,0); else if(t==105) on_special(c,0,0); else input_ev(t,c,v,u); } }
 /* entrada por socket de datagramas (<ctl>/input.sock): com o arquivo glinput.cmd, um evento escrito entre a leitura e o unlink se perdia (teclas "sumiam") */
 static int ifd=-1;
 static void poll_cmdfile(void){ if(ifd>=0){ char l[128]; ssize_t n; while((n=recv(ifd,l,sizeof l-1,MSG_DONTWAIT))>0){ l[n]=0; input_line(l); } } if(access(P("glinput.cmd"),F_OK)) return; FILE*f=fopen(P("glinput.cmd"),"r"); if(!f) return; char l[128]; while(fgets(l,128,f)) input_line(l); fclose(f); unlink(P("glinput.cmd")); }
@@ -147,6 +147,7 @@ static void process(u32 *w,u32 nbytes){
     case OP_GEN:{ u32 cls=a[0],cnt=a[1],i; if(n<2||cls>=5) break; if(cnt>n-2) cnt=n-2; for(i=0;i<cnt;i++){ GLuint h=0; if(cls==0) glGenTextures(1,&h); else if(cls==1) glGenBuffers(1,&h); else if(cls==2) glGenFramebuffersEXT(1,&h); else glGenRenderbuffersEXT(1,&h); setmap(cls,a[2+i],h); } break; }
     case OP_MAPBIND: map_bind(a[0],a[1],a[2]); break;
     case OP_MAPLAYER: map_set_layer(a[0],a[1],a[2],a[3],a[4]); break;
+    case OP_VIDLAYER: vid_set_layer(a[0],a[1],a[2],a[3],a[4]); break;
     case OP_DEL:{ u32 cls=a[0],cnt=a[1],i; if(n<2||cls>=5) break; if(cnt>n-2) cnt=n-2; for(i=0;i<cnt;i++){ GLuint h=H(cls,a[2+i]); if(!h) continue; if(cls==0){ map_forget(h); glDeleteTextures(1,&h); } else if(cls==1) glDeleteBuffers(1,&h); else if(cls==2) glDeleteFramebuffersEXT(1,&h); else if(cls==3) glDeleteRenderbuffersEXT(1,&h); else { if(glIsShader(h)) glDeleteShader(h); else glDeleteProgram(h);} setmap(cls,a[2+i],0); } break; }
     case OP_CREATESHADER: setmap(4,a[0],glCreateShader(a[1])); break;
     case OP_CREATEPROGRAM: setmap(4,a[0],glCreateProgram()); break;

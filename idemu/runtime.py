@@ -492,6 +492,7 @@ class Runtime:
             from . import v850
             if os.environ.get('IDEMU_V850_EXTERNAL'): raise RuntimeError('V850 externo (modo de desenvolvimento): python3 -m idemu.v850')
             self.v850 = v850.V850Link(self.ser4, os.path.join(self.logd, 'v850.log'))
+            self.v850.bridge.ctl = self.ctl            # CarPlay key list -> glhost (<ctl>/input.sock, idemu/most.py carplay_keylog)
             if host and host.get('v850'): self.v850.import_state(host['v850'])
             self.v850.start()
         except Exception as e:
