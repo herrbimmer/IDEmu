@@ -28,8 +28,18 @@ def patch_image(img, edits):
     return bytes(img)
 
 
+# hash DES tradicional (crypt(3)) de 'root' com sal 'KP': o módulo crypt saiu do Python 3.13, então o valor padrão vem pronto
+ROOT_HASH = {'root': b'KPNHwB2guYDys'}
+
+
 def root_password_edit(pw='root'):
-    import crypt
+    """Troca o hash da senha do root no /etc/passwd do IFS (mesmo tamanho, mesmo sal 'KP')."""
+    if pw in ROOT_HASH:
+        return (b'KPcKrCeGUgGeA', ROOT_HASH[pw])
+    try:
+        import crypt                      # só para outras senhas; não existe no Python 3.13+
+    except ImportError:
+        raise RuntimeError('senha %r: o módulo crypt não existe neste Python (3.13+); use a senha padrão "root"' % pw)
     return (b'KPcKrCeGUgGeA', crypt.crypt(pw, 'KP').encode())
 
 
