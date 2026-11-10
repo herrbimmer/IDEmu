@@ -127,12 +127,22 @@
         h('li', null, h('kbd', null, '←'), h('kbd', null, '→'), ' girar o rotor'),
         h('li', null, h('kbd', null, 'Enter'), ' / ', h('kbd', null, IDE.t('Espaço')), ' pressionar'),
         h('li', null, h('kbd', null, '↑'), h('kbd', null, '↓'), ' inclinar · ', h('kbd', null, 'Shift'), '+', h('kbd', null, '←'), h('kbd', null, '→'), ' inclinar lateral'),
-        h('li', null, h('kbd', null, 'M'), h('kbd', null, 'B'), h('kbd', null, 'O'), h('kbd', null, 'C'), h('kbd', null, 'R'), h('kbd', null, 'T'), h('kbd', null, 'N'), ' teclas')),
+        h('li', null, h('kbd', null, 'M'), h('kbd', null, 'B'), h('kbd', null, 'O'), h('kbd', null, 'C'), h('kbd', null, 'R'), h('kbd', null, 'T'), h('kbd', null, 'N'), ' teclas'),
+        h('li', { class: 'tpad-tip', hidden: true }, h('kbd', null, 'Alt'), ' / ', h('kbd', null, 'Ctrl'), ' dois dedos no touch · ', h('kbd', null, 'Shift'), ' juntos')),
       h('div', { class: 'muted small' }, 'Também: arraste o anel ou use a roda do mouse sobre o rotor.'));
+    // iDrive Touch Controller (iDrive 5/6): o touchpad na tampa do controlador. O HMI o liga em telas como o CarPlay, que o passa ao iPhone
+    // (CarPlayTouchPadInput). Dois dedos como no Simulator do iOS: Alt ou Ctrl espelha o segundo dedo no centro (pinça); com Shift os dois andam juntos.
+    const tpadDots = [h('div', { class: 'tpad-dot' }), h('div', { class: 'tpad-dot' })];
+    // tinta: os traços de um dedo ficam no touch até 1,2 s depois do último (escrita nos campos de endereço e de busca, idemu/hwr.py)
+    const tpadInk = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); tpadInk.setAttribute('class', 'tpad-ink'); tpadInk.setAttribute('viewBox', '0 0 100 100'); tpadInk.setAttribute('preserveAspectRatio', 'none');
+    const tpad = h('div', { class: 'tpad', role: 'application', 'aria-label': IDE.t('Controlador iDrive Touch') }, tpadInk, tpadDots[0], tpadDots[1]);
+    const tpadBox = h('div', { class: 'tpad-box', hidden: true },      // só com o touchpad codificado (ZBE_TOUCH; status.touchpad)
+      h('div', { class: 'kt-title' }, 'Controlador iDrive Touch'),
+      h('div', { class: 'tpad-body' }, h('div', { class: 'tpad-ring' }, tpad)));
     const ctrlCard = h('div', { class: 'card ctrl-card' },
       h('div', { class: 'card-title' }, h('span', null, 'Controlador iDrive')),
       h('div', { class: 'ctrl-body' }, rotorHost,
-        h('div', { class: 'ctrl-side' }, kbdTip)));
+        h('div', { class: 'ctrl-side' }, tpadBox, kbdTip)));
 
     // abas
     const tabBar = h('div', { class: 'tabbar', role: 'tablist' });
@@ -245,6 +255,88 @@
       const p = dispCoords(e); send('/api/input/click', { x: p.x, y: p.y, down: true, move: true });
     });
 
+    // iDrive Touch Controller: x, y de 0 a 1; com dois dedos também x2, y2
+    function tpadPoint(e) {
+      const r = tpad.getBoundingClientRect();
+      return { x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) };
+    }
+    const twoKey = (e) => e.altKey || e.ctrlKey;
+    // segundo dedo: espelhado no centro (pinça) ou, no modo "juntos", a mesma distância do primeiro que tinha ao tocar
+    function tpadFingers(p, mode, off) {
+      const f = [p];
+      if (mode === 'mirror') f.push({ x: 1 - p.x, y: 1 - p.y });
+      else if (mode === 'pan') f.push({ x: Math.max(0, Math.min(1, p.x + off.x)), y: Math.max(0, Math.min(1, p.y + off.y)) });
+      return f;
+    }
+    function tpadShow(f, cls) {
+      tpadDots.forEach((d, i) => {
+        const q = f[i]; d.className = 'tpad-dot' + (q ? ' ' + cls : '');
+        if (q) { d.style.left = (q.x * 100) + '%'; d.style.top = (q.y * 100) + '%'; }
+      });
+    }
+    function tpadBody(f, extra) {
+      const b = Object.assign({ x: +f[0].x.toFixed(4), y: +f[0].y.toFixed(4) }, extra);
+      if (f[1]) { b.x2 = +f[1].x.toFixed(4); b.y2 = +f[1].y.toFixed(4); }
+      return b;
+    }
+    // Modo de dois dedos: Alt/Ctrl ao tocar = "mirror"; Shift (ao tocar ou durante o arraste) = "pan": guarda a distância atual e os dois andam
+    // juntos; soltar o Shift volta ao espelho. Sem Alt/Ctrl ao tocar, um dedo só até soltar.
+    let pad = null, padLast = 0, padHover = null, inkLine = null, inkT = null;
+    function inkAdd(p, start) {
+      clearTimeout(inkT);
+      if (start || !inkLine) { inkLine = document.createElementNS('http://www.w3.org/2000/svg', 'polyline'); tpadInk.appendChild(inkLine); }
+      inkLine.setAttribute('points', (inkLine.getAttribute('points') || '') + ' ' + (p.x * 100).toFixed(1) + ',' + (p.y * 100).toFixed(1));
+    }
+    function inkEnd() { inkLine = null; clearTimeout(inkT); inkT = setTimeout(() => { tpadInk.textContent = ''; }, 1200); }
+    const offMirror = (p) => ({ x: 1 - 2 * p.x, y: 1 - 2 * p.y });
+    function padMode(shift) {
+      if (!pad || pad.mode === 'one') return;
+      const want = shift ? 'pan' : 'mirror';
+      if (want === pad.mode) return;
+      if (want === 'pan' && pad.f[1]) pad.off = { x: pad.f[1].x - pad.f[0].x, y: pad.f[1].y - pad.f[0].y };
+      pad.mode = want;
+    }
+    function padMove(p, force) {
+      pad.p = p; pad.f = tpadFingers(p, pad.mode, pad.mode === 'mirror' ? offMirror(p) : pad.off); tpadShow(pad.f, 'down');
+      if (pad.mode === 'one') inkAdd(p, false);
+      const now = performance.now(); if (!force && now - padLast < 40) return; padLast = now;
+      send('/api/input/touchpad', tpadBody(pad.f, { down: true, move: true }));
+    }
+    function padPreview(e) {
+      if (!padHover) return;
+      tpadShow(twoKey(e) ? tpadFingers(padHover, 'mirror', offMirror(padHover)) : [], 'hover');
+    }
+    tpad.addEventListener('contextmenu', (e) => e.preventDefault());     // Ctrl+clique no Mac
+    tpad.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 && !(e.button === 2 && e.ctrlKey)) return;
+      tpad.setPointerCapture(e.pointerId); e.preventDefault(); tpad.classList.add('on');
+      const p = tpadPoint(e), two = twoKey(e);
+      pad = { mode: two ? 'mirror' : 'one', off: offMirror(p), p, f: null };
+      pad.f = tpadFingers(p, pad.mode, pad.off); padMode(two && e.shiftKey); tpadShow(pad.f, 'down');
+      if (pad.mode === 'one') inkAdd(p, true);
+      flushRotor(); send('/api/input/touchpad', tpadBody(pad.f, { down: true }));
+    });
+    tpad.addEventListener('pointermove', (e) => {
+      if (!pad) { padHover = tpadPoint(e); padPreview(e); return; }
+      padMode(e.shiftKey); padMove(tpadPoint(e), false);
+    });
+    tpad.addEventListener('pointerleave', () => { padHover = null; if (!pad) tpadShow([], ''); });
+    // Shift, Alt ou Ctrl apertados ou soltos sem mexer o mouse: atualiza a prévia ou o modo do arraste
+    const padKeys = (e) => {
+      if (!['Shift', 'Alt', 'Control'].includes(e.key)) return;
+      if (pad) { const was = pad.mode; padMode(e.shiftKey); if (pad.mode !== was) padMove(pad.p, true); }
+      else padPreview(e);
+    };
+    window.addEventListener('keydown', padKeys); window.addEventListener('keyup', padKeys);
+    const padEnd = (e) => {
+      if (!pad) return;
+      if (e.type !== 'pointercancel') { padMode(e.shiftKey); pad.p = tpadPoint(e); pad.f = tpadFingers(pad.p, pad.mode, pad.mode === 'mirror' ? offMirror(pad.p) : pad.off); }
+      if (pad.mode === 'one') { inkAdd(pad.p, false); inkEnd(); }
+      const f = pad.f; pad = null; tpad.classList.remove('on');
+      tpadShow([], ''); send('/api/input/touchpad', tpadBody(f, { down: false }));
+    };
+    tpad.addEventListener('pointerup', padEnd); tpad.addEventListener('pointercancel', padEnd);
+
     /* ---------- teclado ---------- */
     const heldKeys = new Set();
     function onKeyDown(e) {
@@ -322,6 +414,7 @@
       if (bezelBox.dataset.k !== bz) { bezelBox.dataset.k = bz; bezelImg.src = { id8: 'bezel_id8.jpg', id7: 'bezel_id7.jpg', rse: 'bezel_rse.jpg', cic: 'bezel_cic.jpg', id6: 'bezel.jpg' }[bz]; }
       const mgu = !!s.kind;     // iDrive 8: sem CAN, GPS, mapa, SSH, V850 nem editor de codificação por enquanto
       codingLink.style.display = s.kind === 'cic' ? 'none' : '';
+      tpadBox.hidden = !s.touchpad; kbdTip.querySelectorAll('.tpad-tip').forEach((li) => { li.hidden = !s.touchpad; });
       if (s.kind === 'cic' && img.width) dispSize.textContent = IDE.t('{w} × {h} · sem tela de toque (use o controlador)', { w: img.width, h: img.height });      // o iDrive 7 tem o editor de codificação
       bootNote.textContent = IDE.t(s.kind === 'cic' ? 'O boot do CIC leva cerca de 1 minuto (emulação SH-4 sem aceleração).' : s.kind === 'mgu7' ? 'O primeiro boot do iDrive 7 leva cerca de 2 minutos (emulação x86 sem aceleração); os seguintes, cerca de 1 segundo.' : mgu ? 'O boot do iDrive 8 leva cerca de 1 minuto.' : 'O primeiro boot leva cerca de 45 segundos; os seguintes, cerca de 1 segundo.') + ' ';
       const shown = (t) => !mgu || t === 'logs' || t === 'phone' || (t === 'ssh' && (s.kind === 'cic' || s.kind === 'mgu7')) || (t === 'gps' && s.kind === 'cic');      // SSH: o CIC (ksh do QNX) e o iDrive 7 (shell do guest) têm console; GPS: o CIC tem um receptor ANTARIS virtual
@@ -437,7 +530,7 @@
     return {
       unmount() {
         R.dead = true; stopLoop(); offState();
-        document.removeEventListener('keydown', onKeyDown); document.removeEventListener('keyup', onKeyUp); window.removeEventListener('blur', onBlur);
+        document.removeEventListener('keydown', onKeyDown); document.removeEventListener('keyup', onKeyUp); window.removeEventListener('blur', onBlur); window.removeEventListener('keydown', padKeys); window.removeEventListener('keyup', padKeys);
         TABS.forEach(([id]) => { const t = R.tabs[id]; if (t) { try { t.api.hide(); t.api.destroy && t.api.destroy(); } catch (e) { console.error(e); } } });
         onBlur();
       },

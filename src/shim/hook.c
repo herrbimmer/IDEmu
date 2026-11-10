@@ -76,7 +76,8 @@ static void auto_power_on(void){ static int t,done; if(!done&&hook_home()&&++t>A
 void (*ilm_main_cb)(void); volatile int ilm_main_want;   /* avisos da ILM a entregar no thread principal (src/shim/ilm.c) */
 typedef void(*pushf)(void*,void*);
 static void push_ctrl(u32 key,u32 pressed,int param){ u8 *pu=app_pu?app_pu:main_pu; u8 *c=((u8*(*)(void))0x24a004)(); *(u32*)(c+0x18)=key; c[0x1c]=pressed; *(int*)(c+0x20)=param; c[0x24]=0; ((pushf)((u32*)*(u32*)pu)[7])(pu,c); }
-static void touch_send(u32 state,u32 x,u32 y,u32 hms);
+static void touch_send(u32 state,u32 x,u32 y,u32 hms,u32 src);
+static u32 pad2_st, pad2_xy;   /* segundo dedo do touchpad (evento 42), usado pelo evento 41 seguinte com o bit 0x100 */
 #define RINGN 256
 static u32 ring[RINGN][4]; static volatile u32 ring_w, ring_r; static volatile int wake_pending;
 void input_pump(void){ u32 *p,*rep; u32 n;
@@ -84,7 +85,8 @@ void input_pump(void){ u32 *p,*rep; u32 n;
   LOCK(); p=br_begin(OP_GETINPUT,0); n=br_sync(&rep); static u32 ev[64*4]; if(n>sizeof ev) n=sizeof ev; memcpy(ev,rep,n); UNLOCK();
   int wake=0;
   for(u32 i=0;i<n/16;i++){ u32 *e=ev+i*4;
-    if(e[0]==40){ touch_send(e[1],e[2]&0xffff,e[2]>>16,e[3]==0xffff?0:e[3]); continue; }   /* toque: direto da thread de entrada (a entrega é assíncrona) e sem o evento de controlador que "acordaria" o laço: ele faria o HMI achar que o iDrive tomou a entrada */
+    if(e[0]==42){ pad2_st=e[1]; pad2_xy=e[2]; continue; }
+    if(e[0]==40||e[0]==41){ touch_send(e[1],e[2]&0xffff,e[2]>>16,e[3]==0xffff?0:e[3],e[0]==41?3:1); continue; }   /* toque: direto da thread de entrada (a entrega é assíncrona) e sem o evento de controlador que "acordaria" o laço: ele faria o HMI achar que o iDrive tomou a entrada */
     if(e[0]==2){ push_ctrl(e[1],0,(int)e[2]); continue; }   /* rotary: key=13 right / 14 left, val=detents */
     if(e[0]==30){ void *rd=*(void**)0x3af0a1c; if(rd) ((void(*)(void*,u32))0x2a0c498)(rd,e[1]); continue; }   /* imagem nova do mapa: o que o sinal do LayerManager faria (CHmiSurfaceRedirection::notifyUpdate) */
     if(ring_w-ring_r<RINGN){ memcpy(ring[ring_w%RINGN],e,16); __atomic_add_fetch(&ring_w,1,__ATOMIC_RELEASE); wake=1; }
@@ -93,7 +95,10 @@ void input_pump(void){ u32 *p,*rep; u32 n;
 }
 /* toque na tela (CID): monta um CTouchData e o entrega a CTouchDataClient::forwardTouchData (assíncrono), como o driver do touchscreen faria.
    Layout (ver docs/TOQUE.md): CTouchData{vptr, vector<dedo> @4, u8 @0x10 (tem de ser 0), tempo @0x14, origem @0x18}; dedo = 10 bytes {u16 x,u16 y,u16 z,u8 tipo,u8 estado,u8 id,u8 0};
-   estado 1 = toca, 2 = move/segura, 3 = solta. O shared_ptr é montado à mão com contagem alta: o objeto nunca é liberado. */
+   estado 1 = toca, 2 = move/segura, 3 = solta. O shared_ptr é montado à mão com contagem alta: o objeto nunca é liberado.
+   Evento 41 = touchpad do controlador (origem 3), como CTouchPadService o monta a partir do CccsAbsoluteCoordinates (MOST 0xE5.01 0xC44):
+   x, y 0..511, z 50, id 0 (CCarPlayActivity usa o id como índice: com id 1 ia junto um dedo vazio), sem os acertos da tela (docs/TOUCH_CONTROLLER.md).
+   Dois dedos (o touchpad tem dois): o evento 42 traz o segundo (estado, x | y << 16) e o 41 seguinte o inclui com o bit 0x100 no estado (id 1). */
 extern int clock_gettime(int,void*);
 static void *tdc_client; static void *(*tdc_c1)(void*,u32,u32); static void *(*tdc_c2)(void*,u32,u32);
 /* o construtor começa com ldr/add relativos ao PC (base da GOT): o trampolim refaz essas duas e salta para depois do prólogo (0x18) */
@@ -104,18 +109,22 @@ static void *hk_tdc_b(void *t,u32 a,u32 b){ void *r=tdc_c2(t,a,b); if(!tdc_clien
 /* o serviço guarda, por origem, se ela está habilitada (std::map<int,bool> em +0x28); num F-series sem touchscreen a origem 1 fica desligada */
 static void touch_enable(void){ u32 *l=*(u32**)((u8*)tdc_client+0x1fc); if(!l||!l[2]) return; int key=1; u8 *p=((u8*(*)(void*,int*))0x2a01514)((u8*)l[2]+0x28,&key);
   if(!*p){ *p=1; br_logx("touch: origem 1 habilitada",(u32)p,0,0); } }
-static void touch_send(u32 state,u32 x,u32 y,u32 hms){
+static void touch_send(u32 state,u32 x,u32 y,u32 hms,u32 src){
   if(!tdc_client){ static int n; if(n++<5) br_logx("touch: sem cliente",state,x,y); return; }
+  if(src==1){
   touch_enable();
   /* sem o monitor de verdade, o serviço de display acha que a tela está apagada e usa o primeiro toque só para acordá-la: marca como ligada */
   if(disp_svc&&(!disp_svc[0x3c]||!disp_svc[0x3d])){ disp_svc[0x3c]=1; disp_svc[0x3d]=1; ((void(*)(void*,int))0x2df744)(disp_svc,1); br_logx("touch: display marcado como ligado",(u32)disp_svc,0,0); }
   /* o tratador de gestos descarta o primeiro toque quando acha que a tela está apagada (+0x30 == 0): ele só a "acorda" */
   { u32 *ip=*(u32**)((u8*)tdc_client+0xd8); int k=0; while(ip&&k<10){ if(ip[3]==0x3384e8){ u8 *ob=(u8*)ip[2]+((int)ip[4]>>1); if(!ob[0x30]){ ob[0x30]=1; br_logx("touch: gestos ativos",(u32)ob,0,0); } } ip=(u32*)ip[0]; k++; } }
-  u8 *f=(u8*)malloc(16); memset(f,0,16); *(u16*)f=(u16)x; *(u16*)(f+2)=(u16)y; *(u16*)(f+4)=30; f[6]=0; f[7]=(u8)state; f[8]=1;
-  u32 vec[3]={(u32)f,(u32)(f+10),(u32)(f+10)};
+  }
+  int nf=(src==3&&(state&0x100))?2:1; state&=0xff;
+  u8 *f=(u8*)malloc(24); memset(f,0,24); *(u16*)f=(u16)x; *(u16*)(f+2)=(u16)y; *(u16*)(f+4)=src==1?30:50; f[6]=0; f[7]=(u8)state; f[8]=src==1;
+  if(nf==2){ u8 *g=f+10; *(u16*)g=(u16)(pad2_xy&0xffff); *(u16*)(g+2)=(u16)(pad2_xy>>16); *(u16*)(g+4)=50; g[6]=0; g[7]=(u8)pad2_st; g[8]=1; }
+  u32 vec[3]={(u32)f,(u32)(f+10*nf),(u32)(f+10*nf)};
   u8 *o=(u8*)malloc(0x20); memset(o,0,0x20);
   u32 ts[2]={0,0}; clock_gettime(2,ts); u32 ms=hms?hms:ts[0]*1000+ts[1]/1000000;   /* hms: hora em que o Mac enviou o toque (o laço do HMI ocioso só roda ~1 vez por segundo e juntaria descida e subida) */
-  ((void*(*)(void*,void*,u32,u32,u32))0x2a26914)(o,vec,0,ms,1);
+  ((void*(*)(void*,void*,u32,u32,u32))0x2a26914)(o,vec,0,ms,src); *(u32*)(o+0x18)=src;
   u32 *cb=(u32*)malloc(16); cb[0]=0x39e2900; cb[1]=0x10000000; cb[2]=1; cb[3]=(u32)o;
   u32 sp[2]={(u32)o,(u32)cb};
   ((void(*)(void*,void*))0x2a22600)(tdc_client,sp);   /* forwardTouchData (assíncrono): enfileira forwardTouchDataSync no processo certo, como o driver faria */
@@ -126,7 +135,8 @@ static void input_main(u8 *pu){
   static int busy; if(busy) return; busy=1; wake_pending=0;
   while(ring_r!=__atomic_load_n(&ring_w,__ATOMIC_ACQUIRE)){ u32 ee[4]; memcpy(ee,ring[ring_r%RINGN],16); __atomic_add_fetch(&ring_r,1,__ATOMIC_RELEASE); u32 *e=ee;
     if(e[0]==1&&e[3]==1){ push_ctrl(e[1],e[2]!=0,1); }
-    else if(e[0]==40){ touch_send(e[1],e[2]&0xffff,e[2]>>16,e[3]==0xffff?0:e[3]); }
+    else if(e[0]==42){ pad2_st=e[1]; pad2_xy=e[2]; }
+    else if(e[0]==40||e[0]==41){ touch_send(e[1],e[2]&0xffff,e[2]>>16,e[3]==0xffff?0:e[3],e[0]==41?3:1); }
     else if(e[0]==9){ void*h=hook_home(); br_logx("home app",(u32)h,h?*((u8*)h+0x338):0,0); if(h) ((void(*)(void*,int))0x2f7114)(h,e[1]); }
     else if(e[0]==7){ u8 *o=((u8*(*)(void))0x228384)(); u8 *x=o?*(u8**)(o+8):0; u8 *h=x?((u8*(*)(void*))0x60af10)(x):0; br_logx("dbg obj",(u32)o,(u32)x,(u32)h); if(h){ u32 vt=*(u32*)h; br_logx("dbg handler vt",vt,*(u32*)(vt+0xc),*(u32*)(vt+8)); } }
     else if(e[0]==6){ br_logx("force display",(u32)disp_svc,disp_svc?disp_svc[0x3c]:0,disp_svc?disp_svc[0x3d]:0); if(disp_svc){ disp_svc[0x3c]=1; disp_svc[0x3d]=1; ((void(*)(void*,int))0x2df744)(disp_svc,1); } }

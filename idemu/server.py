@@ -714,6 +714,12 @@ class H(BaseHTTPRequestHandler):
                 code = {'up': 9, 'down': 10, 'left': 11, 'right': 12}.get(d.get('dir'))
                 if not code: raise ApiError('direção inválida')
                 rt.key(code, 1); time.sleep(0.08); rt.key(code, 0); return {'ok': True}
+            if path == 'input/touchpad':                 # iDrive Touch Controller (iDrive 5/6): x, y de 0 a 1; x2, y2 = segundo dedo
+                if not hasattr(rt, 'touchpad') or getattr(rt, 'kind', None): raise ApiError('o touchpad do controlador só é emulado no iDrive 5 e 6', 501)
+                if not rt.has_touchpad(): raise ApiError('o controlador deste ambiente não tem touchpad (ZBE_TOUCH não codificado)', 409)
+                two = d.get('x2') is not None and d.get('y2') is not None
+                rt.touchpad(float(d['x']), float(d['y']), bool(d.get('down')), bool(d.get('move')),
+                            float(d['x2']) if two else None, float(d['y2']) if two else None); return {'ok': True}
             if path == 'input/click':
                 if not hasattr(rt, 'touch'): raise ApiError('toque no display ainda não é suportado pela camada de entrada do guest', 501)
                 rt.touch(int(d['x']), int(d['y']), bool(d.get('down')), bool(d.get('move'))); return {'ok': True}

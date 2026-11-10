@@ -199,6 +199,11 @@ class MostBridge(object):
             (self.PHONE_DEVICES if os.environ.get('IDEMU_PHONE_DEVICES', '1') != '0' else ()) if sel == 'core' else ()
         self.register_devices(devs)
 
+    # iDrive Touch Controller (FBlock 0xE5.01 CentralControlSystem): FktIDs and the HMI's CccsTouchControl, for handwriting (idemu/hwr.py)
+    CCS_FKTIDS = b'\xff\xff\xff'
+    _ccs_fktids_sent = False
+    ccs_touch_control = None    # the HMI's last CccsTouchControl Set (0xE5.01 0xC41): byte 1 = character classes for handwriting, 0 = off
+
     RETRY_ACK_S = 30.0       # intervalo mínimo entre acks de Notification de uma propriedade sem valor conhecido
 
     def on_most(self, m):
@@ -209,6 +214,11 @@ class MostBridge(object):
             import time as _t
             sk = (m.fblock, m.inst, m.func); old = self.seen.get(sk)
             self.seen[sk] = {'op': m.op, 'data': bytes(m.data), 't': _t.time(), 'n': (old['n'] if old else 0) + 1}
+            if (m.fblock, m.inst, m.func) == (0xE5, 1, 0xC41) and m.op == MostMessage.OP_SET: self.ccs_touch_control = bytes(m.data)
+            if (m.fblock, m.inst) == (0xE5, 1) and not self._ccs_fktids_sent and m.func != 0:
+                # an HMI restored from a snapshot asked for the FktIDs before this bridge existed: tell it once, unasked
+                self._ccs_fktids_sent = True
+                self.send_most(MostMessage(m.src, m.dst, 0xE5, 1, 0, MostMessage.OP_STATUS, self.CCS_FKTIDS))
         if m.func == 1 and m.op == MostMessage.OP_SET and len(m.data) == 5 and m.data[0] == 1:      # FktID 0x001 = Notification
             fkt = _st.unpack('>H', m.data[3:5])[0]
             self.subs.setdefault((m.fblock, m.inst), {})[fkt] = _st.unpack('>H', m.data[1:3])[0]     # fkt -> dispositivo ouvinte
@@ -231,6 +241,12 @@ class MostBridge(object):
                 self.car._sent[(m.fblock, m.inst, m.func)] = data
         elif m.fblock == 0xDA and m.op == MostMessage.OP_GET and self.car is not None and self.car.status_for(m.fblock, m.inst, m.func) is not None:
             self.send_most(MostMessage(m.src, m.dst, m.fblock, m.inst, m.func, MostMessage.OP_STATUS, self.car.status_for(m.fblock, m.inst, m.func)))   # Get de MapControl (0x222, 0x21E...)
+        elif (m.fblock, m.inst, m.func) == (0xE5, 1, 0) and m.op == MostMessage.OP_GET:
+            # FktIDs of the iDrive (Touch) Controller: the HMI picks the character recognition function by them (0xC45 before 0xC42) and only
+            # then subscribes to it. Read from HMI 006_017_006 (CPxyBase FktIDs check): 12-bit pairs, a function below the first one counts
+            # as supported, so FFF FFF = all of them (docs/TOUCH_CONTROLLER.md, "Handwriting").
+            self._ccs_fktids_sent = True
+            self.send_most(MostMessage(m.src, m.dst, m.fblock, m.inst, 0, MostMessage.OP_STATUS, self.CCS_FKTIDS))
         elif self.counts[k] <= 2:
             self.link.log('ponte25 MOST <- %r' % (m,))
 

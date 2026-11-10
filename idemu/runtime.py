@@ -568,7 +568,17 @@ class Runtime:
         return {'state': self.state, 'env': self.id, 'uptime_s': round(time.time() - self.t0, 1) if self.t0 and self.state != 'stopped' else 0,
                 'boot_step': self.step, 'boot_pct': self.pct,
                 'ports': {'ssh': net.get('ssh_port'), 'can': net.get('can_port'), 'gps': net.get('gps_port')},
-                'frame_seq': self.frame_seq(), 'fps': self._fps(), 'error': self.err, 'boot_kind': self.boot_kind, 'marks': self.marks}
+                'frame_seq': self.frame_seq(), 'fps': self._fps(), 'error': self.err, 'boot_kind': self.boot_kind, 'marks': self.marks,
+                'touchpad': self.has_touchpad()}
+
+    def has_touchpad(self):
+        """iDrive 5/6 with the iDrive Touch Controller coded (ZBE_TOUCH): the web UI shows its touchpad only then."""
+        if getattr(self, 'kind', None): return False
+        if getattr(self, '_touchpad', None) is None:
+            from . import codegen
+            try: self._touchpad = codegen.has_touch_controller(self.env)
+            except Exception: self._touchpad = False
+        return self._touchpad
 
     def _fps(self):
         now = time.time(); ft = self.fps_t
@@ -640,6 +650,23 @@ class Runtime:
         """Toque na tela do CID (iDrive 5/6): x, y na resolução do display. O guest monta um CTouchData (estado 1 toca, 2 move, 3 solta)."""
         st = 2 if move else (1 if down else 3)
         self.send_cmd('40 %d %d %d' % (st, (int(x) & 0xffff) | ((int(y) & 0xffff) << 16), int(time.monotonic() * 1000) & 0x7fffffff))
+    def touchpad(self, x, y, down, move=False, x2=None, y2=None):
+        """iDrive Touch Controller (o touchpad na tampa do controlador, iDrive 5/6): x, y de 0 a 1 a partir do canto superior esquerdo; x2, y2 = um
+        segundo dedo. O shim entrega um CTouchData de origem 3 (evento 41; o segundo dedo vai antes no evento 42), como o CTouchPadService faz com o
+        CccsAbsoluteCoordinates do controlador (MOST 0xE5.01 0xC44, dois dedos): coordenadas 0..511, ids 0 e 1. Só a atividade que liga o
+        touchpad o usa (no CarPlay vira CarPlayTouchPadInput, docs/TOUCH_CONTROLLER.md)."""
+        st = 2 if move else (1 if down else 3)
+        def xy(a, b):
+            px, py = (max(0, min(511, int(round(float(v) * 511)))) for v in (a, b))
+            return px | (py << 16)
+        two = x2 is not None and y2 is not None
+        hw = getattr(self, 'hwr', None)                       # handwriting in the HMI's spellers (idemu/hwr.py)
+        if hw is None and getattr(getattr(self, 'v850', None), 'bridge', None) is not None:
+            from . import hwr
+            hw = self.hwr = hwr.Handwriting(self.v850.bridge, lambda t: self.con.append('[idemu] ' + t))
+        if hw is not None and not two: hw.touch(float(x), float(y), st)
+        if two: self.send_cmd('42 %d %d 0' % (st, xy(x2, y2)))
+        self.send_cmd('41 %d %d %d' % (st | (0x100 if two else 0), xy(x, y), int(time.monotonic() * 1000) & 0x7fffffff))
     def rotor(self, delta):
         if delta: self.send_cmd('2 %d %d' % (14 if delta < 0 else 13, abs(int(delta))))
 

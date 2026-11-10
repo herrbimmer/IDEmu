@@ -28,9 +28,17 @@ O byte em `+0x10` do `CTouchData` **tem de ser 0**. Com 1, o classificador de ev
 
 Nenhuma codificação extra (`CID_TOUCH`, `CID_HMI_TOUCH`, ...) e nenhuma variante forçada: o perfil padrão do IDEmu já basta. (O `TCID:false` do log do `TouchDataClient` é só o tipo de touchscreen que o carro real teria; não impede nada.)
 
+## iDrive Touch Controller: o touchpad do controlador (iDrive 5 e 6)
+
+O mesmo caminho entrega o touchpad da tampa do controlador: o "iDrive Touch Controller" no cartão do controlador da interface web
+(`POST /api/input/touchpad`, x e y de 0 a 1; x2 e y2 para um segundo dedo). O shim monta o `CTouchData` como o `CTouchPadService`
+monta a partir do `CccsAbsoluteCoordinates`: origem 3, coordenadas 0..511, z 50, ids 0 e 1, sem os acertos da tela (origem 1,
+display, gestos). Eventos do guest: 41 (estado, x | y << 16, hora; bit 0x100 no estado = com o segundo dedo), precedido de 42
+(estado e posição do segundo dedo). Uso, escrita à mão nos campos de busca e as mensagens MOST: `docs/TOUCH_CONTROLLER.md`.
+
 ## Limites
 
-* Um dedo só (sem pinça nem dois dedos).
+* Tela: um dedo só (sem pinça nem dois dedos). O touchpad do controlador tem dois (acima).
 * iDrive 5 e 6: o HMI ocioso desenha poucas vezes por segundo, então a resposta ao toque leva uma fração de segundo a mais que no carro. No iDrive 5 a tela leva vários segundos para refletir cada entrada e os painéis de pré-visualização demoram até cerca de 1 minuto depois do boot.
 * O mapa do iDrive 5 continua com as quedas do HMI descritas em `OUTRAS_GERACOES.md`.
 

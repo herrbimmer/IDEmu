@@ -44,6 +44,7 @@ New environment → iDrive version → car model → required files → paramete
 * **Real software**: the original HMI binaries run unmodified; hardware that is missing in the VM is replaced by small shims (graphics, window system,
   coding, vehicle services) kept outside the system images.
 * **Virtual controller**: rotor, push, tilt and buttons on screen and on the keyboard; mouse as touch screen.
+* **iDrive Touch Controller** (iDrive 5/6): the touchpad on the controller, with one or two fingers, as the HMI's CarPlay screen and spellers use it; handwriting writes characters in the HMI's spellers (handwriting through macOS Vision, `tools/hwr/build.sh`; `docs/TOUCH_CONTROLLER.md`).
 * **Virtual car**: CAN signals, scenarios, record/replay and a TCP server; GPS with NMEA/UBX output and GPX routes; cluster and HUD views (iDrive 5/6).
 * **Your own car from its VIN**: the type key (VIN characters 4–7) is decoded with the KIS database of your PSdZData into chassis, body, engine, model year,
   market and iDrive generation, and the new environment is set up to match. iDrive 5/6 head units can be **Navigation Professional**, **Business** or **EntryNav**.
@@ -60,7 +61,7 @@ New environment → iDrive version → car model → required files → paramete
 | `src/` | C sources: QEMU patches and boards, GL renderers, guest shims, V850 emulation |
 | `tools/` | Image builders, analysers and test helpers (`tools/mgu`, `tools/cic`, `tools/qemu`) |
 | `electron/` | Desktop wrapper |
-| `docs/` | Technical notes: [architecture](docs/ARQUITETURA.md), [API](docs/API.md), [other generations](docs/OUTRAS_GERACOES.md), [CIC](docs/CIC.md), [touch](docs/TOQUE.md), [V850](docs/V850.md), [cluster and HUD](docs/CLUSTER_HUD.md) (in Portuguese) |
+| `docs/` | Technical notes: [architecture](docs/ARQUITETURA.md), [API](docs/API.md), [other generations](docs/OUTRAS_GERACOES.md), [CIC](docs/CIC.md), [touch](docs/TOQUE.md), [touch controller](docs/TOUCH_CONTROLLER.md) (English), [V850](docs/V850.md), [cluster and HUD](docs/CLUSTER_HUD.md) (in Portuguese) |
 | `tests/` | `python3 -m unittest discover -s tests` |
 
 ## License and legal
