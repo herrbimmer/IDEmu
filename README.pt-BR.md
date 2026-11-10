@@ -83,7 +83,7 @@ Toque na tela (clicar e arrastar) funciona no iDrive 5, 6 e 8 (`docs/TOQUE.md`).
 A aba **Cluster e HUD** (iDrive 5 e 6) desenha o painel de instrumentos e o HUD com o CAN e o GPS virtuais (`docs/CLUSTER_HUD.md`). Em Novo ambiente, cada versão do iDrive mostra o seu nível de funcionalidade e você escolhe a pasta onde a VM fica.
 Ainda **não** feito: as demais grandezas do carro no HMI (pneus, câmbio, combustível…),
 mapa e rota (o PSdZData não traz dados de mapa), áudio, rede no guest, pen drive virtual (`docs/PENDRIVE.md`).
-**CIC** (High, SH-4/QNX 6.3) também está no assistente: mostra a interface real do HMI e aceita rotor, aperto, inclinação e as teclas do controlador (`docs/CIC.md`).
+**CIC** (High, SH-4/QNX 6.3) também está no assistente: mostra a interface real do HMI e aceita rotor, aperto, inclinação e as teclas do controlador; o HMI fala o idioma do ambiente (12 idiomas) (`docs/CIC.md`).
 **CIC, iDrive 7 e 8** também são gerações do assistente. Para elas o app lista os arquivos SWFL exigidos (com o nome exato): você copia o nome e escolhe o arquivo, escolhe vários de uma vez, ou aponta uma pasta e o app acha sozinho; a PSdZData inteira também serve. Os escolhidos ficam como links em `packages/swe/swfl`. (Elas lêem os arquivos direto da PSdZData; ver `docs/OUTRAS_GERACOES.md`): o iDrive 7 mostra a tela central ou a do banco traseiro, com toque, rotor, botões e editor de codificação (o iDrive 8 também tem o editor, com 1.264 parâmetros); o primeiro boot leva ≈ 2 min e os seguintes ≈ 1 s (snapshot).
 Só uma versão do HMI foi validada. Detalhes em `docs/ARQUITETURA.md`.
 

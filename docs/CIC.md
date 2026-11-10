@@ -1,5 +1,18 @@
 # CIC (High, Harman "BMW L6") — estado em 2026-11-09
 
+**Atualização 2026-11-09 (4): idioma do HMI.** No carro o idioma vem do lado do veículo (pelo MOST, via o gateway MOST-CAN; o Root registra
+`processVehicleLogDevEvent: Language is %i`; o caminho exato não foi rastreado) e chega ao HmiMain como a propriedade MOST
+**HumanMachineInterface.CurrentLanguage** (FBlock **0x10**, instância 1, FktID **0x200**), que o próprio HmiMain serve
+(`CStbManMachineInterface`; o `SpeechWrapper` do Root e o `CHBLogDevManMachineInterface` do Second são clientes). No emulador ninguém a envia
+e o HMI fica em alemão. O `VirtualZBE` agora manda um `Set` (OpType 0) com o idioma do ambiente (`coding.language`) logo que o HMI configura
+o controlador, pelo mesmo canal MTP do rotor; o HMI troca de idioma na hora. O assistente usa o idioma da interface do IDEmu.
+* Códigos medidos (Set de 0 a 90, a tela conferida em cada um): 1 alemão, 2 inglês (UK), 4 espanhol, 5 italiano, 6 francês, 8 holandês,
+  14 russo, 17 português (Portugal), 18 polonês, 19 grego, 20 turco, 23 sueco. Os demais o HMI recusa (Status com dado `0x42`) e mantém
+  o idioma atual; o 3 (inglês EUA) não está no banco de textos desta versão ECE. Idiomas que o CIC não tem ficam em inglês (`cic.language_code`).
+* Como os IDs foram achados: um `Get` de FktIDs (FktID 0x000, OpType 1) a cada FBlock 0x00..0xFF pelo canal de injeção (hoje,
+  `POST /api/most/send`); só os FBlocks que o **HmiMain serve** respondem com a lista de funções (0x10: `0x200 0x203 0x222 0x223`;
+  0xCF: `0x200 0x201 0x203 0x205 0xC00 0xC02 0xC03 0xC06`). Complementa o `tools/cic/mostscan.py`, que mapeia os FBlocks que o HmiMain assina.
+
 **Atualização 2026-11-09 (2): roda no app.** Em **Novo ambiente → CIC** o IDEmu cria um ambiente `kind: cic`; **Compilar** monta a imagem
 compartilhada em `<IDEmu>/cic` (`ifs.bin`, `flash.img`, `efs.ifs`, a partir de `swfl_000003a6` e `swfl_00000417` 008_090_002 da PSdZData; alguns
 segundos) e **Iniciar** sobe `bin/qemu-system-sh4` (`idemu/cic.py`). A tela do carro mostra o Hauptmenü real; o boot leva ≈ 70 s até `running`.

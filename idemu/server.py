@@ -117,8 +117,10 @@ class App:
             return self._save_new(env, d.get('home'))
         if d.get('kind') == 'cic':
             if not catalog.packages_ok('cic'): raise ApiError('o CIC precisa dos pacotes swfl_000003a6 e swfl_00000417 (versão 008_090_002)')
+            lang = (d.get('coding') or {}).get('language') or 'de_DE'
+            if lang not in cic.LANGUAGES and lang not in cic.LANGUAGE_FALLBACK: lang = 'en_GB'
             env = {'id': eid, 'name': name, 'created': datetime.datetime.now().isoformat(timespec='seconds'), 'kind': 'cic', 'series': 'E90', 'chassis': 'CIC', 'brand': 'bmw',
-                   'model_name': d.get('model_name') or 'BMW CIC High', 'swfl': {}, 'coding': {'language': 'de_DE', 'units': 'metric', 'country': 'DE', 'vin': dvin, 'display': '1280x480', 'hmi_version': 'id4', 'navi': ''}, 'net': {}}
+                   'model_name': d.get('model_name') or 'BMW CIC High', 'swfl': {}, 'coding': {'language': lang, 'units': 'metric', 'country': 'DE', 'vin': dvin, 'display': '1280x480', 'hmi_version': 'id4', 'navi': ''}, 'net': {}}
             return self._save_new(env, d.get('home'))
         if d.get('kind') == 'mgu22':
             if not catalog.packages_ok('mgu22'): raise ApiError('faltam arquivos do iDrive 8: escolha-os (ou a pasta) na etapa de arquivos')

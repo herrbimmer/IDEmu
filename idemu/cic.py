@@ -15,6 +15,21 @@ VERSION = '008_090_002'
 PKGS = ('000003a6', '00000417')
 IMAGES = ('ifs.bin', 'flash.img', 'efs.ifs', 'build.json')
 
+# Idioma do HMI: no carro ele vem do lado do veículo (pelo MOST; o Root registra "processVehicleLogDevEvent: Language is %i")
+# e chega ao HmiMain como a propriedade MOST HumanMachineInterface.CurrentLanguage (FBlock 0x10, instância 1, FktID 0x200),
+# que o próprio HmiMain serve. No emulador ninguém a envia e o HMI fica em alemão; o IDEmu manda um Set com o idioma do
+# ambiente (coding.language).
+# Códigos medidos na 008_090_002 (Set de 0 a 90): os demais o HMI recusa (status 0x42) e mantém o idioma atual.
+LANGUAGES = {'de_DE': 1, 'en_GB': 2, 'es_ES': 4, 'it_IT': 5, 'fr_FR': 6, 'nl_NL': 8, 'ru_RU': 14, 'pt_PT': 17,
+             'pl_PL': 18, 'el_GR': 19, 'tr_TR': 20, 'sv_SE': 23}
+LANGUAGE_FALLBACK = {'en_US': 'en_GB', 'pt_BR': 'pt_PT'}   # 3 (inglês EUA) não está no banco de textos da ECE
+
+
+def language_code(lang):
+    """coding.language (ex.: 'en_GB') -> código do CurrentLanguage; idioma que o CIC não tem -> inglês (o padrão do HMI)."""
+    lang = LANGUAGE_FALLBACK.get(lang, lang)
+    return LANGUAGES.get(lang, LANGUAGES['en_GB'])
+
 
 def _cicrun():
     """tools/cic/run.py como módulo (montagem das imagens e linha de comando do QEMU)."""
@@ -213,6 +228,7 @@ class CicRuntime(runtime.Runtime):
             env = dict(os.environ, CIC_FRAME=self.frame_path, CIC_NORESET='1', CIC_INPUT=os.path.join(self.run, 'input.sock'),
                        CIC_OUTPUT=os.path.join(self.run, 'output.sock'))
             self.zbe = VirtualZBE(self.run, self.send_cmd, log=self._most_log)
+            self.zbe.language = language_code((self.env.get('coding') or {}).get('language', 'de_DE'))
             env.pop('CIC_DISPLAY', None)
             out = open(os.path.join(self.run, 'qemu.out'), 'wb')
             self._spawn('q', cmd, stdout=out, stderr=subprocess.STDOUT, env=env)
@@ -372,7 +388,8 @@ class VirtualZBE:
                                    campo 0x1E + bits 1 = aperto do controlador; campo 0x1D + dir (1 cima, 2 direita, 4 baixo, 8 esquerda) = inclinação;
                                    campo 0 + bits = teclas (1 MENU, 2 BACK, 4 OPTION, 8 RADIO, 16 CD, 32 NAV, 64 TEL)
       0xC30 RotaryEncoderConfig  01 1D nn 00 (resposta ao Set do HMI, nn = o contador que ele mandou; só então o rotor é aceito)
-    cnt é o contador de mensagens do controlador (o HMI ignora repetição), comum a rotor e botões."""
+    cnt é o contador de mensagens do controlador (o HMI ignora repetição), comum a rotor e botões.
+    Quando o HMI configura o controlador (os proxies dele já estão no ar), manda também o idioma (language, ver LANGUAGES)."""
     REGISTRY = '000c0701000100000102e501'          # registry changed: FBlock E5.01 no endereço 0x0102 (ZGW)
     # códigos de tecla do app -> (campo, dir, bits)
     KEYS = {1: (0, 0, 1), 2: (0, 0, 2), 3: (0, 0, 4), 4: (0, 0, 16), 5: (0, 0, 8), 6: (0, 0, 64), 7: (0, 0, 32), 8: (0x1e, 0, 1),
@@ -381,6 +398,7 @@ class VirtualZBE:
     def __init__(self, run_dir, send, log=lambda s: None):
         self.send_cmd = send; self.log = log; self.cnt = 0; self.pos = 0x1000; self.lock = threading.Lock()
         self.out = os.path.join(run_dir, 'output.sock'); self.registered = False; self.configured = False; self.seen = {}; self.subs = {}
+        self.language = None                       # código do CurrentLanguage enviado quando o HMI configura o controlador
         try: os.unlink(self.out)
         except OSError: pass
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM); self.sock.bind(self.out); self.sock.settimeout(0.5)
@@ -392,9 +410,13 @@ class VirtualZBE:
         try: self.sock.close()
         except OSError: pass
 
-    def _tel(self, fkt, data):
-        b = bytes([0, 12 + len(data), 2, 0, 0x01, 0x02, 0xe5, 0x01, fkt >> 8, fkt & 0xff, 0x0c, 0x01]) + bytes(data)
+    def _tel(self, fkt, data, fblock=0xe5, op=0x0c):
+        b = bytes([0, 12 + len(data), 2, 0, 0x01, 0x02, fblock, 0x01, fkt >> 8, fkt & 0xff, op, 0x01]) + bytes(data)
         self.send_cmd('t ' + b.hex())
+
+    def set_language(self, code):
+        """Set (OpType 0) de HumanMachineInterface.CurrentLanguage (FBlock 0x10, FktID 0x200): o HMI troca de idioma na hora."""
+        self._tel(0x200, [code & 0xff], fblock=0x10, op=0x00)
 
     def _next(self):
         self.cnt = (self.cnt + 1) & 0xff
@@ -429,7 +451,10 @@ class VirtualZBE:
                 with self.lock:
                     self._tel(0xc30, [1, 0x1d, data[2], 0])
                     self._tel(0xc10, [1, 0x1d, self._next(), self.pos >> 8, self.pos & 0xff, 0x1e, 0])   # posição de referência
-                if not self.configured: self.log('controlador iDrive configurado pelo HMI')
+                if not self.configured:
+                    self.log('controlador iDrive configurado pelo HMI')
+                    if self.language:
+                        self.set_language(self.language)
                 self.configured = True
 
     OPS = {0: 'Set', 1: 'Get', 2: 'SetGet', 3: 'Increment', 4: 'Decrement', 5: 'GetInterface', 6: 'StartResult', 7: 'Abort', 8: 'StartResultAck',
