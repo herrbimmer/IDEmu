@@ -72,6 +72,14 @@ def profile_for(env):
         p[k] = v
     return p
 
+def has_touch_controller(env):
+    """iDrive Touch Controller (touchpad on the controller) coded: ZBE_TOUCH of the profile (1 unless EntryNav or changed in the coding editor)."""
+    v = profile_for(env).get('ZBE_TOUCH', 0)
+    if isinstance(v, (bool, int)): return bool(v)
+    for y in load_dict().get('ZBE_TOUCH', ()):
+        if y['value'].replace('va_ZBE_TOUCH_', '') == str(v): return bool(y['val'])
+    return False
+
 def build_table(profile):
     """Retorna (bytes_da_tabela, linhas_aplicadas, avisos)."""
     c = load_dict()

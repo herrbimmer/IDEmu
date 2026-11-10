@@ -33,7 +33,7 @@ UI_EN = re.compile(r'^(?:[A-Z][a-z]+(?:[ ,.:\'?!-]|$)|\d+ [a-z]+ )')
 # Not user-facing, or deliberately untranslated: routes (hash URLs), keyboard keys, HTTP, native language names, product names.
 ALLOW = {
     'ambientes', '#/ambientes', 'novo', 'pt_BR', 'Português (Brasil)', 'Português (Portugal)', 'Español', 'Français', 'Türkçe',
-    'Escape', 'Enter', 'Tab', 'Shift', 'Content-Type', 'x', 'Rolls-Royce', 'Navigation Business', 'Navigation Professional', 'EntryNav', '#nav a[data-route="ambientes"]',
+    'Escape', 'Enter', 'Tab', 'Shift', 'Alt', 'Ctrl', 'Control', 'Content-Type', 'x', 'Rolls-Royce', 'Navigation Business', 'Navigation Professional', 'EntryNav', '#nav a[data-route="ambientes"]',
 }
 
 
