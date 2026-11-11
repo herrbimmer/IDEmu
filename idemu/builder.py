@@ -77,6 +77,20 @@ def _walk_files(root):
             p = os.path.join(dp, f)
             yield os.path.relpath(p, root), p
 
+def profile_for_hmi(hmi_sha):
+    """data/firmwares/*.json: devolve {nome: '0xHEX'} do perfil cujo hmi_sha256 bate; None se não há (ou é só esboço)."""
+    d = os.path.join(HERE, 'data', 'firmwares')
+    if not hmi_sha or not os.path.isdir(d): return None
+    for f in sorted(os.listdir(d)):
+        if not f.endswith('.json'): continue
+        try: pr = json.load(open(os.path.join(d, f)))
+        except Exception: continue
+        a = pr.get('hmi_addr')
+        if pr.get('hmi_sha256') == hmi_sha and isinstance(a, dict) and a:
+            return {k: (v.get('addr') if isinstance(v, dict) else v) for k, v in a.items()}
+    return None
+
+
 def build(env, env_dir, log=print, progress=lambda pct, step: None):
     _last = [None]
     _p = progress
@@ -190,10 +204,10 @@ def build(env, env_dir, log=print, progress=lambda pct, step: None):
     progress(80, 'Disco de dados pronto')
     # 5) shim.img
     progress(82, 'Montando camada de tradução (shim)')
-    build_shim(env, istep['os'], os.path.join(img_dir, 'shim.img'), log)
-    # 6) assinatura do HMI + manifesto
     hm = tree.get('opt/hmi/ID5/bin/HmiMain3D')
     manifest['hmi_sha256'] = sha256_file(hm) if hm else None
+    build_shim(env, istep['os'], os.path.join(img_dir, 'shim.img'), log, manifest['hmi_sha256'])
+    # 6) assinatura do HMI + manifesto
     known = json.load(open(os.path.join(HERE, 'data', 'known_hmi.json')))
     manifest['hmi_validated'] = manifest['hmi_sha256'] in known.get('validated', [])
     if not manifest['hmi_validated']:
@@ -205,7 +219,7 @@ def build(env, env_dir, log=print, progress=lambda pct, step: None):
     progress(100, 'Pronto')
     return manifest
 
-def build_shim(env, os_istep, out, log=print):
+def build_shim(env, os_istep, out, log=print, hmi_sha=None):
     t = mkdisk.Tree()
     t.mkdir('/lib', 0o40775)
     libdir = os.path.join(HERE, 'shim', 'lib')
@@ -219,6 +233,11 @@ def build_shim(env, os_istep, out, log=print):
     # variantes internas forçadas (id -> 0/1): o shim lê /fs/shim/variants.bin (u32 LE: id | valor << 31)
     vt = b''.join(struct.pack('<I', (int(k, 0) & 0xffff) | (int(bool(v)) << 31)) for k, v in sorted((env.get('variants') or {}).items()))
     if vt: t.add('/variants.bin', 0o100644, vt, len(vt))
+    # IDEmu multi-firmware: endereços específicos do build (registry em data/firmwares/). Shim lê /fs/shim/addr.tab ("nome 0xHEX").
+    prof = profile_for_hmi(hmi_sha)
+    if prof:
+        at = ''.join('%s %s\n' % (k, v) for k, v in sorted(prof.items())).encode()
+        t.add('/addr.tab', 0o100644, at, len(at)); log('addr.tab: %d endereços (perfil %s)' % (len(prof), (hmi_sha or '')[:12]))
     # serviços: números do starter.cfg do próprio SWFL
     cfg = open(os.path.join(os_istep, 'opt/sys/etc/starter.cfg'), errors='replace').read()
     procs = []

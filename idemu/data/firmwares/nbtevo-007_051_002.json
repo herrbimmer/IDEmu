@@ -1,0 +1,181 @@
+{
+  "profile": "nbtevo-007_051_002",
+  "status": "working",
+  "note": "Full firmware profile for IDEmu. This is exactly what the IDEmu shim is currently pinned to (the authors' validated NBTEvo_ID5_2403 build). Serves as the format reference for other firmwares and equals the shim's compiled-in defaults.",
+  "swfl": {
+    "os": "swfl_0000271a.bin.007_051_002",
+    "hmi": "swfl_00002720.bin.007_051_002",
+    "brand": "swfl_00002719.bin.007_051_002"
+  },
+  "hmi_sha256": "fe770d1957fdfcd250d1f8cf7fba0e9a7c25e8c053e59f04f3274055fedda935",
+  "display": "10_25_1440x540",
+  "hu_variant": "professional",
+  "comment_addresses": "Absolute addresses of INTERNAL functions/objects inside HmiMain3D (the binary is stripped - no symbols; addresses recovered by analysis). THIS is what changes from build to build and must live in the profile, not in the shim code. mech: patch=overwrite a branch (hk_patch), tramp=trampoline with return (hk_tramp/hk_tdc_tramp), call=called from inside a hook body, glob=global object/constant.",
+  "hmi_addr": {
+    "eds_display_enable": {
+      "addr": "0x2df744",
+      "mech": "tramp",
+      "what": "display service: mark the screen as on (hk_eds)"
+    },
+    "eds2_display_enable": {
+      "addr": "0x2dfe98",
+      "mech": "tramp",
+      "what": "display service #2 (hk_eds2)"
+    },
+    "touch_client_ctor1": {
+      "addr": "0x2a24660",
+      "mech": "tramp",
+      "what": "CTouchDataClient ctor C1 (capture the client pointer)"
+    },
+    "touch_client_ctor2": {
+      "addr": "0x2a24e48",
+      "mech": "tramp",
+      "what": "CTouchDataClient ctor C2"
+    },
+    "map_surface_map": {
+      "addr": "0x2a0d728",
+      "mech": "patch",
+      "what": "CHmiSurfaceRedirection::mapSurfaceBuffer (hk_mapsurf)"
+    },
+    "map_surface_unmap": {
+      "addr": "0x2a0cd04",
+      "mech": "patch",
+      "what": "CHmiSurfaceRedirection::unmapSurfaceBuffer"
+    },
+    "lua_error": {
+      "addr": "0x2a4e9b8",
+      "mech": "tramp",
+      "what": "Lua error log (hk_luaerr)"
+    },
+    "setup_screen_registered": {
+      "addr": "0x2f9308",
+      "mech": "tramp",
+      "what": "initial-screen registration -> capture home_app and app_pu (hk_stc)"
+    },
+    "pmd_fullon": {
+      "addr": "0x18d8800",
+      "mech": "patch",
+      "what": "PMD getter -> return Fullon_useron (hk_pmd=0x64)"
+    },
+    "pm_fullon": {
+      "addr": "0x18d8ef8",
+      "mech": "patch",
+      "what": "PM getter -> return fullon_useron (hk_pm=3)"
+    },
+    "tpm_update_status": {
+      "addr": "0xd98b44",
+      "mech": "tramp",
+      "what": "CDevCarTpmStatusImpl::updateStatus (tire-pressure diag)"
+    },
+    "tpm_timer_cb": {
+      "addr": "0xd99218",
+      "mech": "patch",
+      "what": "TPM 'no data' timer -> silence (hk_tpm_timer)"
+    },
+    "make_ctrl_event_A": {
+      "addr": "0x736fa0",
+      "mech": "call",
+      "what": "create a controller-event object (send_ctrl)"
+    },
+    "make_ctrl_event_B": {
+      "addr": "0x24a004",
+      "mech": "call",
+      "what": "create a controller-event object (push_ctrl)"
+    },
+    "get_hmi_proc_unit": {
+      "addr": "0x20f518",
+      "mech": "call",
+      "what": "getHmiProcUnit() (TLS, valid on the main thread)"
+    },
+    "set_power_mode": {
+      "addr": "0x2152c4",
+      "mech": "call",
+      "what": "set power mode on the proc unit (auto_power_on / e==8)"
+    },
+    "map_redirection_obj": {
+      "addr": "0x3af0a1c",
+      "mech": "glob",
+      "what": "global pointer to the CHmiSurfaceRedirection object"
+    },
+    "map_notify_update": {
+      "addr": "0x2a0c498",
+      "mech": "call",
+      "what": "CHmiSurfaceRedirection::notifyUpdate (new map frame)"
+    },
+    "touch_data_ctor": {
+      "addr": "0x2a26914",
+      "mech": "call",
+      "what": "CTouchData constructor"
+    },
+    "touch_forward": {
+      "addr": "0x2a22600",
+      "mech": "call",
+      "what": "CTouchDataClient::forwardTouchData (async)"
+    },
+    "map_int_bool_find": {
+      "addr": "0x2a01514",
+      "mech": "call",
+      "what": "std::map<int,bool>::operator[] (origin enable)"
+    },
+    "gesture_vtbl_marker": {
+      "addr": "0x3384e8",
+      "mech": "glob",
+      "what": "gesture-handler vtable marker constant"
+    },
+    "dbg_obj_get": {
+      "addr": "0x228384",
+      "mech": "call",
+      "what": "debug-object getter (e==7)"
+    },
+    "dbg_handler_get": {
+      "addr": "0x60af10",
+      "mech": "call",
+      "what": "debug-handler getter (e==7)"
+    },
+    "home_app_handler": {
+      "addr": "0x2f7114",
+      "mech": "call",
+      "what": "home-app handler (e==9)"
+    },
+    "ccs_push_button": {
+      "addr": "0x2dd6fc",
+      "mech": "call",
+      "what": "CHmiCCSController::onCCSPushButton (button)"
+    },
+    "ctrl_listener_group_id": {
+      "addr": "0x3af08cc",
+      "mech": "glob",
+      "what": "global controller-listener group id"
+    },
+    "cb_vtable_const": {
+      "addr": "0x39e2900",
+      "mech": "glob",
+      "what": "callback vtable constant (touch_send)"
+    },
+    "tdc_tramp_vtable_const": {
+      "addr": "0x39e7930",
+      "mech": "glob",
+      "what": "vtable constant used in the touch-ctor trampoline"
+    }
+  },
+  "comment_struct": "Field offsets inside HMI objects. Usually more stable than addresses (struct ABI changes less often), but check when porting. Lists the ones used in hook.c.",
+  "struct_off": {
+    "home_flags_338": "0x338..0x33c  (home_app: power/available flags)",
+    "disp_on_3c_3d": "0x3c,0x3d     (disp_svc: screen on)",
+    "procunit_id_ce": "0xce          (CHmiProcUnit: id)",
+    "tdc_list_1fc": "0x1fc         (tdc_client: pointer to the origins map)",
+    "tdc_gest_d8": "0xd8          (tdc_client: gesture-handler list)"
+  },
+  "comment_portable": "These hooks go BY SYMBOL (dlsym) - they work on any build, so no addresses are needed in the profile. Keep them in the shim code as-is.",
+  "symbol_hooks": [
+    "libhmicom.so:_ZN12CHmiProcUnit15updateAliveTimeEv",
+    "libhmicom.so:_ZN12CHmiProcUnitC2ER18CHmiMainDispatcherh",
+    "libhmicoding.so:sysetDefaults_getBuffer",
+    "libhmicoding.so:_ZN16CDsiBinaryStreamC1Et",
+    "libhmicoding.so:_ZN16CDsiBinaryStream15readCodingBlockEPvj",
+    "libhmicoding.so:_ZN17CHmiCodingService16openBinaryStreamEPK14CODING_FEATURE",
+    "libhmicoding.so:_ZN17CHmiVariantServer15isVACodingValidEv",
+    "libhmicoding.so:_ZN17CHmiVariantServer12isVariantSetEj"
+  ],
+  "scope_table": "idemu/data/most_trace_scopes.json (for 007_051_002) + persistTracemost.bin from the OS SWFL"
+}
