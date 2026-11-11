@@ -57,6 +57,47 @@ def make_most_pair(most, lib):
 class BuildError(Exception):
     pass
 
+
+with open(os.path.join(HERE, 'data', 'known_hmi.json')) as _known_hmi_file:
+    SHIM_PROFILES = json.load(_known_hmi_file)['profiles']
+SHIM_HMI_HASHES = {name: files['hmi'] for name, files in SHIM_PROFILES.items()}
+
+
+def shim_libdir(env):
+    profile = env.get('shim_profile')
+    if not profile or profile == 'default':
+        return os.path.join(HERE, 'shim', 'lib')
+    if not re.fullmatch(r'[A-Za-z0-9_-]+', profile):
+        raise BuildError('invalid shim profile name')
+    return os.path.join(HERE, 'shim', 'lib-' + profile)
+
+
+def validate_shim_profile(env, hmi_sha256, library_hashes=None):
+    """Return whether the exact firmware/profile set is validated; reject known mismatches."""
+    selected = env.get('shim_profile') or 'default'
+    expected = SHIM_PROFILES.get(selected)
+    if not expected:
+        raise BuildError('shim profile %s has no registered HmiMain3D hash' % selected)
+    explicit = selected != 'default'
+    if hmi_sha256 != expected['hmi']:
+        if explicit:
+            raise BuildError('shim profile %s requires HmiMain3D %s, got %s' % (selected, expected['hmi'], hmi_sha256))
+        for profile, files in SHIM_PROFILES.items():
+            if profile != 'default' and hmi_sha256 == files['hmi']:
+                raise BuildError('HmiMain3D requires shim profile %s' % profile)
+        return False
+    libraries = library_hashes or {}
+    for name, digest in expected.items():
+        if name == 'hmi':
+            continue
+        actual = libraries.get(name)
+        if actual != digest:
+            if explicit:
+                raise BuildError('shim profile %s requires %s %s, got %s' % (selected, name, digest, actual))
+            return False
+    return True
+
+
 def sha256_file(p, limit=None):
     h = hashlib.sha256()
     with open(p, 'rb') as f:
@@ -188,14 +229,19 @@ def build(env, env_dir, log=print, progress=lambda pct, step: None):
     mkq6.build(root, tpl, os.path.join(img_dir, 'sdb.img'))
     os.unlink(tpl)
     progress(80, 'Disco de dados pronto')
-    # 5) shim.img
+    # 5) shim.img — validate the exact HMI and hooked libraries before selecting a fixed-address profile
     progress(82, 'Montando camada de tradução (shim)')
+    hm = tree.get('opt/hmi/ID5/bin/HmiMain3D')
+    manifest['shim_profile'] = env.get('shim_profile', 'default')
+    manifest['hmi_sha256'] = sha256_file(hm) if hm else None
+    library_hashes = {}
+    for name in ('libhmicom.so', 'libhmicoding.so'):
+        path = tree.get('opt/hmi/ID5/lib/' + name)
+        library_hashes[name] = sha256_file(path) if path else None
+    manifest['shim_library_sha256'] = library_hashes
+    manifest['hmi_validated'] = validate_shim_profile(env, manifest['hmi_sha256'], library_hashes)
     build_shim(env, istep['os'], os.path.join(img_dir, 'shim.img'), log)
     # 6) assinatura do HMI + manifesto
-    hm = tree.get('opt/hmi/ID5/bin/HmiMain3D')
-    manifest['hmi_sha256'] = sha256_file(hm) if hm else None
-    known = json.load(open(os.path.join(HERE, 'data', 'known_hmi.json')))
-    manifest['hmi_validated'] = manifest['hmi_sha256'] in known.get('validated', [])
     if not manifest['hmi_validated']:
         log('AVISO: este HmiMain3D não é uma das versões validadas; os patches em memória do shim podem falhar.')
     manifest['images'] = {n: os.path.getsize(os.path.join(img_dir, n)) for n in ('boot.ifs', 'sda.img', 'sdb.img', 'shim.img')}
@@ -208,7 +254,9 @@ def build(env, env_dir, log=print, progress=lambda pct, step: None):
 def build_shim(env, os_istep, out, log=print):
     t = mkdisk.Tree()
     t.mkdir('/lib', 0o40775)
-    libdir = os.path.join(HERE, 'shim', 'lib')
+    libdir = shim_libdir(env)
+    if not os.path.isdir(libdir):
+        raise BuildError('shim library directory does not exist: %s' % libdir)
     for f in sorted(os.listdir(libdir)):
         p = os.path.join(libdir, f)
         t.add('/lib/' + f, 0o100755, p, os.path.getsize(p))

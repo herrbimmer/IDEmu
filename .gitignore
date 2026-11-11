@@ -14,6 +14,7 @@
 # Build outputs in src/: they include libraries copied from the firmware (libc.so.3, libc.so.6, libsocket.so.3...) used only to link the shims.
 /src/*/out/
 /src/shim/lib/
+/idemu/shim/lib-*/
 /src/glhost/glhost
 # Copied from the firmware at build time (mgu7.build) / look-and-feel assets taken from the BMW HMI
 /tools/mgu/rse_overlay/usr/lib/idemu/libdl.so.2

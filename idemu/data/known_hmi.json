@@ -1,1 +1,18 @@
-{"validated": ["fe770d1957fdfcd250d1f8cf7fba0e9a7c25e8c053e59f04f3274055fedda935"], "note": "sha256 do HmiMain3D (NBTEvo_ID5_2403, swfl_00002720.bin.007_051_002) com o qual os patches do shim foram validados"}
+{
+  "validated": [
+    "fe770d1957fdfcd250d1f8cf7fba0e9a7c25e8c053e59f04f3274055fedda935"
+  ],
+  "profiles": {
+    "default": {
+      "hmi": "fe770d1957fdfcd250d1f8cf7fba0e9a7c25e8c053e59f04f3274055fedda935",
+      "libhmicom.so": "6ca9f5c1bb4b975d032947510da1b1ab4fffc3baeb3ca13e4d7d808ab29de2e4",
+      "libhmicoding.so": "2bce4ed3f22b87f9eeea9b104d9674d5e13da9ac031a81203215a6254973036b"
+    },
+    "1803": {
+      "hmi": "2c906b5c6799a37a17b0ed51c37f67e0c1a2bc0edfb87596008f075062e9e6bf",
+      "libhmicom.so": "23bdd4e323270854facced291ecd36b36dd9f13392c42736b4494df1bb9e6a70",
+      "libhmicoding.so": "537122ae737c809aa31eabf6ba1d1bdbe793c5e532024deaff53bc55ac57fba4"
+    }
+  },
+  "note": "Exact HmiMain3D and hooked companion-library hashes for each fixed-address NBT shim profile. hmi_validated requires the complete profile set, not membership in a global HMI-only list."
+}
