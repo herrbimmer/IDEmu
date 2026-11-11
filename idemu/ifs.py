@@ -104,6 +104,15 @@ def list_files(d):
 
 LOGIN_OLD = b'/boot/bin/login\0login\0'
 LOGIN_NEW = b'/boot/bin/////ksh\0ksh\0'
+LOGIN_KSH = b'/boot/bin/ksh\0ksh\0-li\0'
+
+
+def select_console_shell(buf):
+    """Use ksh for the serial console; older firmware already starts ksh -li."""
+    if LOGIN_OLD in buf:
+        replace_bytes(buf, LOGIN_OLD, LOGIN_NEW)
+    elif LOGIN_KSH not in buf:
+        raise ValueError('no supported login/ksh console record in IFS')
 
 def _script_entries(buf):
     """Comandos do script de boot do IFS: [(offset, tamanho, tipo)]. Tipos: 0 = executa, 1 = waitfor, 2 = reopen, 3 = mensagem, 4 = symlink."""
@@ -148,7 +157,7 @@ def make_boot_ifs(boot1_ifs, tools):
     img = decompress(boot1_ifs)
     unc = make_uncompressed(boot1_ifs, img)
     v, ss = _hdr(unc)
-    replace_bytes(unc, LOGIN_OLD, LOGIN_NEW)
+    select_console_shell(unc)
     speed_up_script(unc)
     fix_checksum(unc, 8 + ss)
     return add_files(bytes(unc), tools)

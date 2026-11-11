@@ -667,6 +667,7 @@ window.IDE = window.IDE || {};
     ['troca precisa manter o tamanho', 'The replacement must keep the same size'],
     ['script de boot não encontrado no IFS', 'Boot script not found in the IFS'],
     ['script de boot malformado no IFS', 'Malformed boot script in the IFS'],
+    ['no supported login/ksh console record in IFS', 'Nenhum registro de console login/ksh suportado no IFS'],
     ['o guest não respondeu (sem prompt de shell no console?)', 'The guest did not respond (no shell prompt on the console?)'],
     ['o console do guest fechou a conexão', 'The guest console closed the connection'],
     ['console do guest ocupado (outra sessão/comando em uso)', 'Guest console busy (another session or command in use)'],
