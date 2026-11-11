@@ -21,7 +21,7 @@ system: the firmware packages do not carry map data and the navigation engine do
 
 ## What you need
 
-* A Mac with Apple Silicon (iDrive 8 uses the Hypervisor framework) and macOS 14 or later. Python 3 (the system one is enough).
+* A Mac with Apple Silicon (iDrive 8 uses the Hypervisor framework) and macOS 14 or later. Python 3 (the system one is enough). NBT Evo / iDrive 5/6 can also run on Linux and WSL; see [Linux/WSL](docs/LINUX.md).
 * Your **own firmware packages** (PSdZData / SWFL files). The assistant tells you which exact files each iDrive version needs and can scan a folder
   for them. Nothing is modified; images are built in the project folder.
 * A QEMU build: the project uses custom QEMU 11.1.2 builds (OMAP5, SH7785 and `idemu-shm` devices). Source and recipe: [src/qemu](src/qemu) and

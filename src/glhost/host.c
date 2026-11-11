@@ -1,8 +1,16 @@
 #include <time.h>
+#ifdef __APPLE__
 #define GL_SILENCE_DEPRECATION 1
 #include <GLUT/glut.h>
 #include <OpenGL/gl.h>
 #include <OpenGL/glext.h>
+#include <OpenGL/OpenGL.h>
+#else
+#define GL_GLEXT_PROTOTYPES 1
+#include <GL/glut.h>
+#include <GL/gl.h>
+#include <GL/glext.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +21,6 @@
 #include <sys/stat.h>
 #include <strings.h>
 #include "glops.h"
-#include <OpenGL/OpenGL.h>
 typedef unsigned int u32;
 static const char *SOCK="/tmp/glbridge.sock";
 static const char *CTL="/tmp"; static char pbuf_[8][512]; static int pidx_;
@@ -234,7 +241,9 @@ int main(int argc,char**argv){
   glutCreateWindow("BMW iDrive 6 (QEMU OMAP5)"); glutDisplayFunc(display); glutReshapeFunc(reshape); glutIdleFunc(idle); glutMouseFunc(on_mouse); glutMotionFunc(on_motion); glutKeyboardFunc(on_key); glutKeyboardUpFunc(on_keyup); glutSpecialFunc(on_special); glutSpecialUpFunc(on_specialup); glutIgnoreKeyRepeat(1);
   fprintf(stderr,"[host] GL_VERSION=%s RENDERER=%s\n",glGetString(GL_VERSION),glGetString(GL_RENDERER));
   load_index(); ensure_screen(1440,540); window_shown=getenv("GLHOST_SHOW")!=NULL; if(!window_shown) glutHideWindow();
+#ifdef __APPLE__
   { GLint si=0; CGLSetParameter(CGLGetCurrentContext(),kCGLCPSwapInterval,&si); }
+#endif
   if(getenv("GLHOST_LOG_MB")) glog_max=atoll(getenv("GLHOST_LOG_MB"))<<20;
   if(getenv("GLHOST_REPLAY")&&replay_file(getenv("GLHOST_REPLAY"))) return 3;
   if(getenv("GLHOST_RECORD")){ recf=fopen(getenv("GLHOST_RECORD"),"wb"); if(recf){ static char rb[1<<20]; setvbuf(recf,rb,_IOFBF,sizeof rb); } }
