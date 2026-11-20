@@ -152,6 +152,7 @@ class App:
         env = self.load_env(eid); env.pop('build', None); env.pop('snapshot', None)
         if d.get('name'): env['name'] = d['name']
         if 'fast_boot' in d: env['fast_boot'] = bool(d['fast_boot'])
+        if 'real_graphics' in d and not env.get('kind'): env['real_graphics'] = bool(d['real_graphics'])     # iDrive 5/6; docs/REAL_GRAPHICS.md
         if 'coding' in d:
             if not isinstance(d['coding'], dict): raise ApiError('coding deve ser um objeto')
             env['coding'].update(d['coding'])
@@ -165,7 +166,7 @@ class App:
             if codegen.enum_values('BAUREIHE') and env['chassis'] not in codegen.enum_values('BAUREIHE'): raise ApiError('chassi desconhecido: ' + env['chassis'])
         # recodificar: refaz só o shim (rápido) se o ambiente já foi compilado (só o iDrive 5/6 tem shim; os outros aplicam a codificação na próxima partida).
         # Antes de salvar: se falhar, o env.json continua descrevendo o shim que está no disco.
-        if not env.get('kind') and self.build_info(eid)['state'] == 'ready' and ('coding' in d or 'chassis' in d):
+        if not env.get('kind') and self.build_info(eid)['state'] == 'ready' and ('coding' in d or 'chassis' in d or 'real_graphics' in d):
             try: self._rebuild_shim(eid, env)
             except Exception as e:
                 raise ApiError('falha ao regravar a codificação: %s' % e, 500)
@@ -246,7 +247,7 @@ class App:
             elif os.path.isfile(s): shutil.copy(s, t)
         return self.load_env(nid)
     # ---- shim (iDrive 5/6) ----
-    SHIM_INPUTS = (os.path.join('shim', 'lib'), os.path.join('guest', 'boot.sh'), os.path.join('guest', 'agent.sh'))
+    SHIM_INPUTS = (os.path.join('shim', 'lib'), os.path.join('guest', 'boot.sh'), os.path.join('guest', 'agent.sh'), 'realgfx')
     def _rebuild_shim(self, eid, env):
         tmp = os.path.join(self.env_dir(eid), 'work'); os.makedirs(tmp, exist_ok=True)
         try:
@@ -694,6 +695,10 @@ class H(BaseHTTPRequestHandler):
         if path == 'run/status':
             if not A.rt: return {'state': 'stopped', 'env': None, 'uptime_s': 0, 'boot_step': '', 'boot_pct': 0, 'ports': {}, 'frame_seq': 0, 'fps': 0, 'error': None}
             return A.rt.status()
+        if path == 'run/view':                           # real_graphics: the real display (DSS scan-out) or IDEmu's own renderer
+            rt = A.need_rt()
+            if m == 'POST': rt.set_view(d.get('view'))
+            return {'ok': True, 'view': rt.view(), 'real_graphics': rt.real_graphics()}
         if path == 'run/frame':                          # próximo quadro, cru (RGB): a tela do navegador pede o seguinte assim que desenha este
             rt = A.need_rt(); since = int(q.get('since', -1)); end = time.time() + 1.5
             seq = rt.frame_seq()

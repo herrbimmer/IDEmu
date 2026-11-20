@@ -8,6 +8,9 @@ Third-party and separately licensed parts
 * src/qemu/ contains new files and a patch for QEMU 11.1.2 (omap5-uevm board, idemu-shm device, SH7785 board, SDHCI PCI fix). QEMU is
   GNU GPL v2 (or later); these files are derived works and are distributed under GPL-2.0-or-later, as their headers say. A QEMU binary built
   with them (tools/qemu/build.sh) is also GPL: if you pass it on, you must offer the corresponding source.
+* src/qemu/omap5430_dss.c, omap5430_dss.h, omap5430_sdma.c and omap5430_sdma.h (OMAP5430 display controller and system DMA
+  models, used by "real_graphics" environments) come from agent00jackson/bimmulator (https://github.com/agent00jackson/bimmulator,
+  nix/patches/qemu/0001-omap5-core.patch, commit bf03f2e) and are GPL-2.0-or-later; each file says what IDEmu changed.
 * The renderers use ANGLE/OpenGL on the host and the system libraries of macOS; nothing of them is included here.
 
 Not included, not affiliated
@@ -18,6 +21,7 @@ Not included, not affiliated
 * This repository contains no BMW software, firmware, system images, map data or decompiled code. IDEmu reads the files (PSdZData/SWFL packages)
   that you have the right to use, builds its own images locally and never modifies the originals.
 * Some data tables in idemu/data/ (signal maps, coding dictionary, property defaults) are interface descriptions written down while analysing
-  such files; they contain names, ids and numbers, not program code.
+  such files; they contain names, ids and numbers, not program code. So does idemu/realgfx/graphics.conf.in: a firmware Screen configuration
+  cut down to library names and display settings.
 * "Noncommercial" means what the license says: personal study, research, hobby and education are fine; selling the emulator or using it in a
   commercial product or service is not allowed without a separate license from the licensor.

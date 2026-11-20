@@ -172,7 +172,13 @@ class Runtime:
         return {'valid': self.snapshot_valid(), 'size': size, 'enabled': self.fast_boot_enabled()}
 
     def fast_boot_enabled(self):
-        return self.env.get('fast_boot', True) and not os.environ.get('IDEMU_NO_SNAPSHOT')
+        # real_graphics: snapshot restore with the file-backed guest RAM and the DSS model is not validated, so always a cold boot
+        return self.env.get('fast_boot', True) and not os.environ.get('IDEMU_NO_SNAPSHOT') and not self.real_graphics()
+
+    def real_graphics(self):
+        """iDrive 5/6 with "real_graphics": true in env.json: the firmware's own QNX Screen and LayerManagerService run on QEMU's
+        OMAP5430 DSS model beside IDEmu's HMI path (docs/REAL_GRAPHICS.md)."""
+        return bool(self.env.get('real_graphics')) and not self.env.get('kind')
 
     def drop_snapshot(self):
         import shutil
@@ -207,6 +213,8 @@ class Runtime:
                    GLHOST_GLSLDIR=B + 'glsl', GLHOST_MAPCACHE=mapsvc.CACHE, GLHOST_CTL=self.ctl, GLHOST_FRAME=self.frame_path,
                    OMAP5_SETBITS=SETBITS)
         if self.env.get('show_window'): env['GLHOST_SHOW'] = '1'
+        if self.real_graphics():              # OMAP5430 DSS/SDMA models on the board; the scanned-out display goes to <run>/dss.rgb
+            env['IDEMU_DSS'] = '1'; env['IDEMU_DSS_FRAME'] = R + 'dss.rgb'
         S = self.snap_dir + '/'
         if resume: env['GLHOST_REPLAY'] = S + 'gl.rec'
         if record:
@@ -232,6 +240,11 @@ class Runtime:
                      '-device', 'loader,file=%ssdb.img,addr=0x01000000' % I,
                      '-device', 'loader,file=%sshim.img,addr=%#x' % (I, self._shim_addr()[0])]
         args += shlex.split(os.environ.get('IDEMU_QEMU_EXTRA', ''))
+        if self.real_graphics():
+            # guest RAM in a shared file (guest physical 0x80000000 = file offset 0): hmimirror_host copies the HMI frame into the
+            # buffer of the real Screen window that hmimirror owns in the guest
+            args += ['-object', 'memory-backend-file,id=omap5ram,size=2048M,mem-path=%sram.bin,share=on' % R,
+                     '-machine', 'memory-backend=omap5ram']
         self.step = 'Iniciando QEMU'; self.pct = 5
         self._spawn('q', args, env=env, stdout=self._log('qemu.log'), stderr=subprocess.STDOUT)
         self.ser4 = ser4
@@ -369,6 +382,13 @@ class Runtime:
                         self.con.append('[idemu] snapshot não criado: %s: %s' % (type(e).__name__, e)); self.drop_snapshot()
                 if self.stop_ev.is_set(): return                  # parado durante o snapshot: não volta para "em execução"
                 self.state = 'running'; self.pct = 100; self.step = 'Em execução'; self._mark('running')
+                if self.real_graphics():      # IDEmu's HMI frame -> the real Screen window "256" (hmimirror)
+                    if not os.path.exists(os.path.join(self.run, 'dss.rgb')):
+                        self.con.append('[idemu] real_graphics: this QEMU has no OMAP5430 DSS model (no dss.rgb), so the display stays on '
+                                        "IDEmu's renderer; rebuild bin/qemu-system-arm with tools/qemu/build-arm-linux.sh")
+                    from . import hmimirror_host
+                    threading.Thread(target=hmimirror_host.run, args=(self.run, self.frame_path, self.stop_ev, self.con.append),
+                                     daemon=True).start()
             elif not ready and hmi_t[0]:
                 self.pct = min(90, 55 + int((time.time() - hmi_t[0]) / 30.0 * 35))
 
@@ -581,7 +601,8 @@ class Runtime:
         return {'state': self.state, 'env': self.id, 'uptime_s': round(time.time() - self.t0, 1) if self.t0 and self.state != 'stopped' else 0,
                 'boot_step': self.step, 'boot_pct': self.pct,
                 'ports': {'ssh': net.get('ssh_port'), 'can': net.get('can_port'), 'gps': net.get('gps_port')},
-                'frame_seq': self.frame_seq(), 'fps': self._fps(), 'error': self.err, 'boot_kind': self.boot_kind, 'marks': self.marks}
+                'frame_seq': self.frame_seq(), 'fps': self._fps(), 'error': self.err, 'boot_kind': self.boot_kind, 'marks': self.marks,
+                'real_graphics': self.real_graphics(), 'view': self.view()}
 
     def _fps(self):
         now = time.time(); ft = self.fps_t
@@ -590,15 +611,31 @@ class Runtime:
         return round(len(ft) / 3.0, 1)
 
     # ---------- quadro de vídeo ----------
+    # real_graphics: once the HMI is running, the display shows the real one (the DSS model's scan-out, <run>/dss.rgb, same frame
+    # format) unless the view is switched back to IDEmu's own renderer. Boot progress always follows the renderer's frames.
+    def view(self):
+        if not self.real_graphics() or self.state != 'running' or not os.path.exists(os.path.join(self.run, 'dss.rgb')): return 'idemu'
+        return getattr(self, '_view', None) or 'real'
+
+    def set_view(self, v):
+        if v in ('real', 'idemu') and self.real_graphics(): self._view = v
+        return self.view()
+
+    def _frame_file(self):
+        return os.path.join(self.run, 'dss.rgb') if self.view() == 'real' else self.frame_path
+
     def _map(self):
         # o renderizador pode recriar ou aumentar o arquivo (superfície nova): mapeia de novo quando o inode ou o tamanho mudam, em vez de ler um mapeamento velho
-        try: st = os.stat(self.frame_path); key = (st.st_ino, st.st_size)
+        path = self._frame_file()
+        try: st = os.stat(path); key = (path, st.st_ino, st.st_size)
         except OSError: return self._fm
         if self._fm is None or getattr(self, '_fm_key', None) != key:
             try:
-                with open(self.frame_path, 'rb') as f: fm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+                with open(path, 'rb') as f: fm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
             except Exception:
                 return self._fm if self._fm is not None and len(self._fm) <= st.st_size else None
+            if self._fm is not None and getattr(self, '_fm_key', (path,))[0] != path:
+                self._lastseq = None; self._png = (None, None)      # other source: its sequence numbers are not comparable
             old, self._fm, self._fm_key = self._fm, fm, key
             if old is not None:
                 try: old.close()

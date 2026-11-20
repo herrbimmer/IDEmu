@@ -251,6 +251,24 @@ def build(env, env_dir, log=print, progress=lambda pct, step: None):
     progress(100, 'Pronto')
     return manifest
 
+def realgfx_mode(env):
+    """(width, height) of an iDrive 5/6 environment's display, from its coding (DISPLAY_SIZE_RESOLUTION, e.g. 10_25_1440x540)."""
+    w, h = (env.get('coding') or {}).get('display', '10_25_1440x540').split('_')[-1].split('x')
+    return int(w), int(h)
+
+
+def realgfx_files(env):
+    """(name, mode, bytes) of /fs/shim/realgfx in a real_graphics environment: start.sh and hmimirror from idemu/realgfx, plus
+    graphics.conf (from graphics.conf.in) and mode.sh for the environment's display."""
+    d = os.path.join(HERE, 'realgfx'); w, h = realgfx_mode(env)
+    def read(n):
+        with open(os.path.join(d, n), 'rb') as f: return f.read()
+    conf = read('graphics.conf.in').replace(b'{width}', b'%d' % w).replace(b'{height}', b'%d' % h)
+    return [('graphics.conf', 0o100644, conf),
+            ('mode.sh', 0o100644, b'# the environment display (IDEmu builder)\nRG_W=%d RG_H=%d\n' % (w, h)),
+            ('start.sh', 0o100755, read('start.sh')), ('hmimirror', 0o100755, read('hmimirror'))]
+
+
 def build_shim(env, os_istep, out, log=print):
     t = mkdisk.Tree()
     t.mkdir('/lib', 0o40775)
@@ -351,6 +369,11 @@ def build_shim(env, os_istep, out, log=print):
         'export IDEMU_HMI_HEARTBEAT=%d' % int(os.environ.get('IDEMU_HMI_HEARTBEAT') or 40000),
     ]) + '\n'
     eb = envsh.encode(); t.add('/env.sh', 0o100755, eb, len(eb))
+    # real_graphics (docs/REAL_GRAPHICS.md): /realgfx/* on the shim disk; boot.sh runs realgfx/start.sh after the services
+    if env.get('real_graphics'):
+        t.mkdir('/realgfx', 0o40775)
+        for name, mode, data in realgfx_files(env):
+            t.add('/realgfx/' + name, mode, data, len(data))
     # plugins de teste: idemu/plugins/<Nome>/* vira /plug/<Nome>/* (boot.sh liga como .../data/ro/Plugins)
     pdir = os.path.join(HERE, 'plugins')
     if os.path.isdir(pdir):

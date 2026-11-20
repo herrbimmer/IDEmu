@@ -21,6 +21,9 @@
 #include "target/arm/cpu.h"
 #include "target/arm/arm-powerctl.h"
 #include "hw/core/cpu.h"
+#include "hw/display/omap5430_dss.h"   /* DSS/DMM and SDMA models from agent00jackson/bimmulator */
+#include "hw/dma/omap5430_sdma.h"
+#include "monitor/qdev.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -330,6 +333,25 @@ static void omap5_uevm_init(MachineState *machine)
     }
 
     glb_init(sysmem);
+
+    /* IDEMU_DSS=1 ("real_graphics" environments) adds the OMAP5430 DSS/DMM and SDMA models (omap5430_dss.c,
+     * omap5430_sdma.c, from bimmulator), so the firmware's own QNX Screen server (OMAP5430 WFD driver, software
+     * composition) can run and scan out. Without IDEMU_DSS the board is exactly as before. */
+    if (getenv("IDEMU_DSS")) {
+        DeviceState *dss = qdev_new(TYPE_OMAP5430_DSS);
+        DeviceState *sdma = qdev_new(TYPE_OMAP5430_SDMA);
+        qdev_set_id(dss, g_strdup("omap5-dss"), &error_fatal);
+        object_property_set_link(OBJECT(dss), "system-memory", OBJECT(sysmem), &error_fatal);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(dss), &error_fatal);
+        omap5430_dss_map(SYS_BUS_DEVICE(dss));
+        sysbus_connect_irq(SYS_BUS_DEVICE(dss), 0, pic[113]);   /* DMM SPI */
+        sysbus_connect_irq(SYS_BUS_DEVICE(dss), 1, pic[25]);    /* DISPC SPI */
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(sdma), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(sdma), 0, 0x4a056000);
+        for (n = 0; n < 4; n++) {
+            sysbus_connect_irq(SYS_BUS_DEVICE(sdma), n, pic[12 + n]);
+        }
+    }
 
     /* UART3 (console) 16550, regshift 2, SPI 106 */
     serial_mm_init(sysmem, 0x48020000, 2, pic[74], 48000000 / 16,

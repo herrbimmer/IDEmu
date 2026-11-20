@@ -2,6 +2,11 @@
 window.IDE = window.IDE || {}; IDE.LANG_DATA = IDE.LANG_DATA || {};
 IDE.LANG_DATA.ru = {
   dict: {
+    "Real graphics": "Реальная графика",
+    "IDEmu render": "Рендер IDEmu",
+    "Image source": "Источник изображения",
+    "Screen composed by the real QNX Screen and LayerManagerService": "Экран, собранный настоящими QNX Screen и LayerManagerService",
+    "IDEmu's own renderer (HMI only)": "Собственный рендер IDEmu (только HMI)",
     "IDEmu – iDrive emulator": "IDEmu – эмулятор iDrive",
     "IDEmu – home": "IDEmu – главная",
     "Main": "Главное",

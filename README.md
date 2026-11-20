@@ -45,6 +45,8 @@ New environment → iDrive version → car model → required files → paramete
   coding, vehicle services) kept outside the system images.
 * **Virtual controller**: rotor, push, tilt and buttons on screen and on the keyboard; mouse as touch screen.
 * **Virtual car**: CAN signals, scenarios, record/replay and a TCP server; GPS with NMEA/UBX output and GPX routes; cluster and HUD views (iDrive 5/6).
+* **Real graphics (experimental, iDrive 5/6)**: the firmware's own QNX Screen server and LayerManagerService on a model of the OMAP5430 display
+  controller, with the HMI in the real scene; no GPU is emulated (see [docs/REAL_GRAPHICS.md](docs/REAL_GRAPHICS.md)).
 * **Rear-view camera**: your computer's webcam is shown over the display when reverse is engaged on the virtual CAN bus, with parking guide lines (see [docs/CAMERA.md](docs/CAMERA.md)). Host-side overlay: the emulated HMI does not receive the video.
 * **Your own car from its VIN**: the type key (VIN characters 4–7) is decoded with the KIS database of your PSdZData into chassis, body, engine, model year,
   market and iDrive generation, and the new environment is set up to match. iDrive 5/6 head units can be **Navigation Professional**, **Business** or **EntryNav**.

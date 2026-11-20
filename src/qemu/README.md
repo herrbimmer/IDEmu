@@ -18,4 +18,13 @@ Com `IDEMU_SMP=2` (e um `qemu-system-arm` compilado com este arquivo, apontado p
 `boot.sh` prende o HMI no CPU0 (`on -R 1`). Estado em 2026-11-09: serviços e shell sobem; o HMI ainda sai com 138 (watchdog do SvcDSI) num Mac carregado, então
 o padrão continua 1 núcleo. Com o
 Mac sem carga (2026-11-09, f30-bmw, boot completo): os serviços chegam antes (3,6 s contra 5,0 s), mas o HMI, preso no CPU0, é o gargalo e o boot até a tela levou 55,6 s
-(1 núcleo: 27–37 s) com uma saída 138 no meio; o rotor responde igual (0,086 s). Sem `on -R 1` o HMI sai com 138/139 em laço. Compilação: a árvore do QEMU 11.1.2 com `qemu-v11.1.2-idemu.patch` + este arquivo, `--target-list=arm-softmmu`.
+(1 núcleo: 27–37 s) com uma saída 138 no meio; o rotor responde igual (0,086 s). Sem `on -R 1` o HMI sai com 138/139 em laço. Compilação: a árvore do QEMU 11.1.2 com `qemu-v11.1.2-idemu.patch` + este arquivo + os modelos `omap5430_*` (seção abaixo), `--target-list=arm-softmmu`; o `tools/qemu/build-arm-linux.sh` faz tudo isso.
+
+## iDrive 5/6: OMAP5430 DSS and SDMA models (`real_graphics`)
+
+`omap5430_dss.c`/`.h` (DSS/DMM: DISPC registers, vsync, scan-out) and `omap5430_sdma.c`/`.h` (system DMA) come from
+[agent00jackson/bimmulator](https://github.com/agent00jackson/bimmulator) (`nix/patches/qemu/0001-omap5-core.patch`,
+commit `bf03f2e`), GPL-2.0-or-later. IDEmu added origin lines to all four and, in `omap5430_dss.c`, the `IDEMU_DSS_FRAME`
+scan-out to a frame file. `omap5-uevm.c` instantiates them only with `IDEMU_DSS=1`, which the runtime sets for
+environments with `"real_graphics": true`; `tools/qemu/build-arm-linux.sh` copies them into the QEMU tree and adds them to
+`hw/display/meson.build` and `hw/dma/meson.build`. See [docs/REAL_GRAPHICS.md](../../docs/REAL_GRAPHICS.md).

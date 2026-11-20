@@ -37,7 +37,7 @@ POST /api/settings {"psdz_path":""} -> esquece a pasta psdzdata salva
 ## Ambientes
 POST /api/env/create {name, series, chassis, brand, swfl:{os,brand,hmi}, coding:{...}, net:{...}, home?} -> Env   (`home`: pasta onde a VM fica; o IDEmu cria `<home>/<id>` e liga `environments/<id>` a ela por link simbólico; exige pasta existente, gravável e com 1 GB livre; `Env.home` traz o caminho real. Em `kind` mgu7/mgu22 só os dados e logs vão para lá: a imagem é compartilhada)
 GET  /api/env/<id> -> Env
-POST /api/env/<id>/update {name?, coding?, net?} -> Env        (coding pode mudar sem rebuild completo)
+POST /api/env/<id>/update {name?, coding?, net?, real_graphics?} -> Env        (coding e real_graphics podem mudar sem rebuild completo; real_graphics: docs/REAL_GRAPHICS.md)
 POST /api/env/<id>/build -> {"ok":true}                         (assíncrono)
 GET  /api/env/<id>/build -> {"state":..., "pct":..., "step":..., "log":["linhas recentes"]}
 POST /api/env/<id>/start {"cold":false} -> {"ok":true}   (cold=true ignora o estado salvo)        POST /api/env/<id>/stop -> {"ok":true}
@@ -79,9 +79,10 @@ POST /api/env/<id>/coding/backup {"note":"..."} -> {"ok":true,"id":"...","backup
 
 ## Execução (ambiente ligado)
 GET  /api/run/status -> {"state":"stopped|booting|running|error","env":"id"|null,"uptime_s":12.3,"boot_step":"texto","boot_pct":0-100,
-        "ports":{"ssh":2222,"can":29536,"gps":29537},"frame_seq":123,"fps":4.2,"error":null}
+        "ports":{"ssh":2222,"can":29536,"gps":29537},"frame_seq":123,"fps":4.2,"error":null,"real_graphics":false,"view":"idemu"}
 GET /api/run/frame?since=<seq> -> quadro cru (RGB, cabeçalhos X-Frame-Seq/W/H); segura a resposta até haver um quadro novo (204 se não houver em 1,5 s)
 GET  /api/run/screen.png          -> PNG do display do carro (1440x540) ; cabeçalho X-Frame-Seq
+GET|POST /api/run/view {"view":"real"|"idemu"} -> {"ok":true,"view":...,"real_graphics":bool}   (ambientes real_graphics: display real ou renderizador do IDEmu; frame e screen.png seguem a escolha)
 POST /api/input/key   {"code":1..14,"val":1|0}   códigos: MENU1 BACK2 OPTION3 CD4 RADIO5 TEL6 NAV7 PRESS8 N9 S10 W11 E12 RIGHT13 LEFT14
 POST /api/input/rotor {"delta":n}   n>0 horário (envia |n| passos), n<0 anti-horário
 POST /api/input/tilt  {"dir":"up|down|left|right"}

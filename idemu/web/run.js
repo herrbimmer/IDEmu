@@ -107,8 +107,17 @@
       Object.keys(frameBtns).forEach((k) => { frameBtns[k].classList.toggle('on', k === m); frameBtns[k].setAttribute('aria-pressed', String(k === m)); });
       IDE.pref.set('screenFrame', m);
     }
+    // "real_graphics" environments (docs/REAL_GRAPHICS.md): the real display (QNX Screen + LayerManagerService,
+    // scanned out by the DSS model) or IDEmu's own HMI renderer
+    const viewBtns = {};
+    const viewSeg = h('div', { class: 'seg view-seg', role: 'group', 'aria-label': 'Fonte da imagem' },
+      [['real', 'Gráfico real', 'Tela composta pelo QNX Screen e pelo LayerManagerService reais'], ['idemu', 'Render do IDEmu', 'Imagem do renderizador próprio do IDEmu (só o HMI)']].map(([m, l, tip]) =>
+        (viewBtns[m] = h('button', { type: 'button', class: 'segb', title: tip, onclick: () => setView(m) }, l))));
+    viewSeg.style.display = 'none';
+    function markView(m) { Object.keys(viewBtns).forEach((k) => { viewBtns[k].classList.toggle('on', k === m); viewBtns[k].setAttribute('aria-pressed', String(k === m)); }); }
+    async function setView(m) { markView(m); try { await IDE.post('/api/run/view', { view: m }); } catch (e) { console.error(e); } }
     const dispCard = h('div', { class: 'card display-card' },
-      h('div', { class: 'card-title' }, h('span', null, 'Display do carro'), h('div', { class: 'disp-meta' }, dispSize, frameSeg)),
+      h('div', { class: 'card-title' }, h('span', null, 'Display do carro'), h('div', { class: 'disp-meta' }, dispSize, viewSeg, frameSeg)),
       bezelBox);
     setFrame(IDE.pref.get('screenFrame', 'bezel') === 'plain' ? 'plain' : 'bezel');
 
@@ -314,6 +323,8 @@
     }
     function applyStatus(s) {
       R.status = s;
+      viewSeg.style.display = s.real_graphics ? '' : 'none';
+      if (s.real_graphics) markView(s.view || 'real');
       const envR = s.env ? IDE.envById(s.env) : null;
       const bz = s.kind === 'mgu22' ? 'id8' : s.kind === 'mgu7' ? ((s.role || (envR && envR.role)) === 'rse' ? 'rse' : 'id7') : s.kind === 'cic' ? 'cic' : 'id6';     // iDrive 7: tela central do Série 8 (G15); RSE só no ambiente do banco traseiro
       if (s.disp && s.disp[0] && !R.haveImage && dispWrap.dataset.disp !== String(s.disp)) {

@@ -32,6 +32,8 @@ ksh /fs/shim/agent.sh > /dev/null 2>&1 &
 waitfor /dev/ser6 10
 echo IDEMU_STAGE services
 ksh /fs/shim/rc.sh > /var/rc.log 2>&1
+# real_graphics environments (docs/REAL_GRAPHICS.md): the firmware's own QNX Screen and LayerManagerService
+[ -f /fs/shim/realgfx/start.sh ] && { echo IDEMU_STAGE realgfx; ksh /fs/shim/realgfx/start.sh; }
 echo IDEMU_STAGE hmi
 [ "$HMI_DELAY" -gt 0 ] && sleep $HMI_DELAY
 cd /opt/hmi

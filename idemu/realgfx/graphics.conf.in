@@ -1,0 +1,40 @@
+# QNX Screen configuration for "real_graphics" environments (docs/REAL_GRAPHICS.md). IDEmu's builder writes it to the shim
+# disk as realgfx/graphics.conf, with {width} and {height} set to the environment's display.
+#
+# It is the firmware's own lib/graphics/omap5430_ES2_0/graphics-<width>_<height>.conf cut down to what runs without the
+# GPUs: QEMU models the OMAP5430 display controller (DSS) but neither the PowerVR SGX540 nor the Vivante GC320.
+#  - EGL display 1 keeps the firmware's SGX library lists, so Screen's clients load as on the car, but not its kernel
+#    driver (gpu-dlls): EGL/GLES cannot initialise. IDEmu's HMI path keeps drawing through glhost.
+#  - EGL display 2 (the GC320 blitter) is left out; Screen composes with its software blitter (blit-config and usage sw).
+#  - WFD device 1 is the real OMAP5430 driver, with only the GFX pipeline bound to display 1. The firmware's video
+#    pipelines, its second display and its MFLAG, extproc and GC320 memory settings are left out.
+begin khronos
+    begin egl display 1
+        egl-dlls = [IMG%s] libusc.so libsrv_um.so libpvr2d.so libIMGegl.so
+        glesv1-dlls = libusc.so libsrv_um.so libIMGegl.so libImgGLESv1_CM.so
+        glesv2-dlls = libusc.so libsrv_um.so libusc.so libIMGegl.so libImgGLESv2.so
+        gpu-string = SGX540rev120
+        aperture = 250
+    end egl display
+
+    begin wfd device 1
+        wfd-dlls = libwfdcfg.so libWFDomap5430ES2_0.so
+        gfx = 1
+    end wfd device
+end khronos
+
+begin winmgr
+    begin globals
+        blit-config = sw
+    end globals
+    begin display 1
+        formats = rgba8888 rgbx8888
+        video-mode = {width} x {height} @ 60
+    end display
+    begin class framebuffer1
+        display = 1
+        pipeline = 4
+        format = rgba8888
+        usage = sw
+    end class
+end winmgr
