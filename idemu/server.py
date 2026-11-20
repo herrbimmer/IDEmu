@@ -246,12 +246,17 @@ class App:
             elif os.path.isfile(s): shutil.copy(s, t)
         return self.load_env(nid)
     # ---- shim (iDrive 5/6) ----
-    SHIM_INPUTS = (os.path.join('shim', 'lib'), os.path.join('guest', 'boot.sh'), os.path.join('guest', 'agent.sh'))
+    SHIM_INPUTS = (os.path.join('shim', 'lib'), os.path.join('shim', 'lib-1803'),
+                   os.path.join('data', 'firmwares'), os.path.join('data', 'known_hmi.json'),
+                   os.path.join('guest', 'boot.sh'), os.path.join('guest', 'agent.sh'))
     def _rebuild_shim(self, eid, env):
         tmp = os.path.join(self.env_dir(eid), 'work'); os.makedirs(tmp, exist_ok=True)
         try:
             os_dir = os.path.join(tmp, 'os'); self._extract_cfg(env, os_dir)
-            builder.build_shim(env, os_dir, os.path.join(self.env_dir(eid), 'images', 'shim.img'))
+            with open(os.path.join(self.env_dir(eid), 'build.json')) as f:
+                manifest = json.load(f)
+            builder.build_shim(env, os_dir, os.path.join(self.env_dir(eid), 'images', 'shim.img'),
+                               hmi_sha=manifest.get('hmi_sha256'), library_hashes=manifest.get('shim_library_sha256'))
         finally: shutil.rmtree(tmp, ignore_errors=True)
     def _shim_stale(self, eid):
         """O shim.img do ambiente é mais velho que as bibliotecas do guest ou os scripts de boot (uma atualização do IDEmu): precisa ser refeito para valer."""
@@ -308,6 +313,12 @@ class App:
         if self.build_info(eid)['state'] != 'ready': raise ApiError('compile o ambiente antes de gravar a codificação')
         if (self.flashes.get(eid) or {}).get('state') == 'running': raise ApiError('já existe uma gravação em andamento')
         if self.rt and self.rt.state in ('booting', 'running') and self.rt.id != eid: raise ApiError('outro ambiente está em execução; pare-o primeiro')
+        try:
+            with open(os.path.join(self.env_dir(eid), 'build.json')) as f:
+                manifest = json.load(f)
+            builder.shim_firmware(env, manifest.get('hmi_sha256'), manifest.get('shim_library_sha256'))
+        except (OSError, ValueError, builder.BuildError) as e:
+            raise ApiError('rebuild the environment before flashing coding: %s' % e)
         before = json.loads(json.dumps(env.get('coding') or {}))
         try:
             if restore: env['coding'] = coding.read_backup(self.env_dir(eid), restore)['coding']; done = []
@@ -330,7 +341,8 @@ class App:
                 if was_running: self.stop()
                 self.save_env(env)
                 shutil.rmtree(os.path.join(self.env_dir(eid), 'snapshot'), ignore_errors=True)    # o snapshot embute a codificação antiga
-                builder.build_shim(env, os_dir, os.path.join(self.env_dir(eid), 'images', 'shim.img'))
+                builder.build_shim(env, os_dir, os.path.join(self.env_dir(eid), 'images', 'shim.img'),
+                                   hmi_sha=manifest.get('hmi_sha256'), library_hashes=manifest.get('shim_library_sha256'))
                 shutil.rmtree(tmp, ignore_errors=True)
                 if was_running:
                     j['step'] = 2

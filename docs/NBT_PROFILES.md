@@ -4,6 +4,11 @@ NBT Evo `HmiMain3D` builds do not share a stable address layout. A fixed-address
 
 IDEmu keeps the original 24-03 profile as the default and supports a separate 18-03 profile. Profile library directories are independent: `idemu/shim/lib` for the default and `idemu/shim/lib-1803` for 18-03.
 
+The default shim also supports `007_001_016`, `007_030_001` and `007_039_008` through the
+[per-firmware address registry](../idemu/data/firmwares/README.md). Each entry pins the exact HMI
+and both hooked companion libraries before the builder writes `addr.tab`. Registry entries do not
+override the separate 18-03 profile, its instruction signatures, feature switches or structure offsets.
+
 ## Validated binaries
 
 | Profile | Firmware package | `HmiMain3D` SHA-256 | Validated scope |

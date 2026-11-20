@@ -42,7 +42,7 @@ rm -f lib/libc.so.3
 cp "$LIBC" lib/libc.so.3
 CC=${CC:-clang}
 CF=(-target armv7-none-eabi -march=armv7-a -mfloat-abi=soft -ffreestanding -fPIC -Os -mno-unaligned-access -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header -Wno-int-conversion -Wno-pointer-sign)
-CF+=("${PROFILE_CF[@]}")
+if [[ "$PROFILE" == 1803 ]]; then CF+=("${PROFILE_CF[@]}"); fi
 if [[ -n ${EXTRA_CF:-} ]]; then
   read -r -a EXTRA <<< "$EXTRA_CF"
   CF+=("${EXTRA[@]}")
