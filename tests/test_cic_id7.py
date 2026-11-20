@@ -23,7 +23,7 @@ class LevelTest(unittest.TestCase):
     def test_ssh_funciona_no_cic_e_no_idrive7(self):
         self.assertEqual(self.feat('id4', 'ssh'), 'full')
         self.assertEqual(self.feat('id7', 'ssh'), 'full')
-        self.assertEqual(self.feat('id8', 'ssh'), 'none')    # o iDrive 8 ainda não tem console
+        self.assertEqual(self.feat('id8', 'ssh'), 'full')    # o shell da ttyAMA0 do guest vai para o SSH pelo mesmo ConsoleMux
 
 
 class ConsoleMuxTest(unittest.TestCase):

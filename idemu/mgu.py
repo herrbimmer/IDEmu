@@ -128,6 +128,9 @@ class MguRuntime(runtime.Runtime):
                    '-object', f'memory-backend-shm,id=m0,size={MB}M', '-dtb', dtb, '-kernel', OUT + '/Image', '-append', args]
             env = dict(os.environ, DYLD_INSERT_LIBRARIES=OUT + '/guest/qemushm.dylib', IDEMU_SHM_NAME=SHM)
             self._spawn('q', cmd, stdin=self._keep, stdout=sl, stderr=subprocess.STDOUT, env=env)
+            # shell do guest (ttyAMA0): a entrada é o FIFO que o QEMU lê, a saída é o console.log; o ConsoleMux os expõe em shell.sock e no SSH
+            self.mux = runtime.ConsoleMux(os.path.join(self.run, 'shell.sock'), self._con_write); self.mux.start()
+            threading.Thread(target=self._tail_console, args=(ser,), daemon=True).start()
             self.step = 'Iniciando o sistema do carro'; self.pct = 15
             end = time.time() + 300; unlinked = False
             # o nome do shm sai quando o primeiro quadro prova que QEMU e mguhost já o abriram (antes: 2 s fixos, e um QEMU lento não achava o objeto)
@@ -143,6 +146,8 @@ class MguRuntime(runtime.Runtime):
                     self.pct = min(95, 15 + int(el * 1.6)); self.step = 'Iniciando o HMI do iDrive 8'
                     if self.frame_seq() >= 2:
                         self._mark('running'); self.state = 'running'; self.pct = 100; self.step = ''
+                        self._start_ssh()
+                        self._start_sim()
                     elif time.time() > end: raise RuntimeError('o HMI não desenhou em 5 minutos; veja logs/console.log')
                 else:
                     self.frame_seq(); self._car_state()
@@ -182,6 +187,21 @@ class MguRuntime(runtime.Runtime):
         wait = getattr(self, '_t_down', 0) + 0.09 - time.time()   # um toque rápido demais o HMI ignora
         if wait > 0: time.sleep(wait)
         self.send_cmd('u')
+
+    def _con_write(self, d):
+        if self._keep is not None:
+            try: os.write(self._keep, d)
+            except OSError: pass
+    def _tail_console(self, path):
+        """Entrega ao ConsoleMux o que o QEMU grava em console.log (a partir do início desta execução)."""
+        try:
+            with open(path, 'rb') as f:
+                while not self.stop_ev.is_set():
+                    d = f.read(4096)
+                    if d:
+                        if self.mux: self.mux.feed(d)
+                    else: time.sleep(0.1)
+        except OSError: pass
 
     def guest(self, cmd):
         """Comando no console do guest (depuração); a saída vai para logs/console.log."""

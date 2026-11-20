@@ -12,16 +12,16 @@ firmware packages, IDEmu builds the disk images locally.
 |---|---|---|---|---|
 | **iDrive 6** (NBT Evo, 2016–2020) | OMAP5 board, QNX 6.5, ARM | **75% High** | Real HMI, touch, rotor and buttons, virtual CAN and GPS, cluster and HUD, connected phone, SSH, coding editor (1,333 parameters), V850 emulation, fast boot (~1 s) | Radio/media/audio, USB stick, some vehicle menu items |
 | **iDrive 5** (NBT / NBT Evo) | Same as iDrive 6 (same packages, `HMI_ID_VERSION=id5`) | **54% Medium** | Real HMI, touch, rotor, CAN, cluster and HUD, SSH, phone, coding editor | Maps, media, USB; the HMI crashes now and then in navigation menus; slow reaction to input |
-| **iDrive 8** (MGU22, BMW i7 G70) | Qualcomm SA8155 class, Linux 5.15, ARM64 (QEMU `virt` + HVF) | **46% Medium** | Real HMI at 2880×960, touch, rotor and buttons, phone screens, clock and temperature, coding editor (1,264 parameters), boot in ~25 s | CAN, maps/GPS, cluster, SSH, media, USB stick |
-| **iDrive 7** (MGU, Linux x86-64) | Intel Apollo Lake class, Linux 4.14, x86-64 (QEMU TCG) | **38% Low** | **Center screen (HU) and rear-seat entertainment screen (RSE)**, touch, rotor and buttons, SSH (root shell), coding editor (1,288 parameters), first boot ~2 min then ~1 s from a snapshot | CAN, GPS/maps, cluster, media, USB stick; many vehicle services are not faked yet |
-| **CIC** (High, "BMW L6") | SH7785 (SH-4A) board, QNX 6.3 | **25% Low** | Real HMI (Hauptmenü), rotor, push, tilt, MENU/BACK/OPTION/MEDIA/MAP keys, SSH (QNX shell) | Touch (the CIC has none), CAN, maps (the virtual GPS receiver is detected and feeds the driver, but nothing shows without maps), coding editor, fast boot; NAV and COM keys do nothing; boot ~1 min |
+| **iDrive 8** (MGU22, BMW i7 G70) | Qualcomm SA8155 class, Linux 5.15, ARM64 (QEMU `virt` + HVF) | **58% Medium** | Real HMI at 2880×960, touch, rotor and buttons, phone screens, clock and temperature, coding editor (1,264 parameters), SSH (root shell), virtual cluster/HUD (simulated CAN/GPS, not fed by the HMI), boot in ~25 s | CAN to the HMI, maps/GPS, media, USB stick |
+| **iDrive 7** (MGU, Linux x86-64) | Intel Apollo Lake class, Linux 4.14, x86-64 (QEMU TCG) | **42% Low** | **Center screen (HU) and rear-seat entertainment screen (RSE)**, touch, rotor and buttons, SSH (root shell), virtual cluster/HUD (simulated CAN/GPS, not fed by the HMI), coding editor (1,288 parameters), first boot ~2 min then ~1 s from a snapshot | CAN to the HMI, GPS/maps, media, USB stick; many vehicle services are not faked yet |
+| **CIC** (High, "BMW L6") | SH7785 (SH-4A) board, QNX 6.3 | **29% Low** | Real HMI (Hauptmenü), rotor, push, tilt, MENU/BACK/OPTION/MEDIA/MAP keys, SSH (QNX shell), virtual cluster/HUD (simulated CAN/GPS, not fed by the HMI), HMI in 12 languages (follows the environment's language) | Touch (the CIC has none), CAN to the HMI, maps (the virtual GPS receiver is detected and feeds the driver, but nothing shows without maps), coding editor, fast boot; NAV and COM keys do nothing; boot ~1 min |
 
 \* Functionality level as shown in the "New environment" assistant (average over 12 features). Maps and route guidance are not available on any
 system: the firmware packages do not carry map data and the navigation engine does not run.
 
 ## What you need
 
-* A Mac with Apple Silicon (iDrive 8 uses the Hypervisor framework) and macOS 14 or later. Python 3 (the system one is enough).
+* A Mac with Apple Silicon (iDrive 8 uses the Hypervisor framework) and macOS 14 or later. Python 3 (the system one is enough). NBT Evo / iDrive 5/6 can also run on Linux and WSL; see [Linux/WSL](docs/LINUX.md).
 * Your **own firmware packages** (PSdZData / SWFL files). The assistant tells you which exact files each iDrive version needs and can scan a folder
   for them. Nothing is modified; images are built in the project folder.
 * A QEMU build: the project uses custom QEMU 11.1.2 builds (OMAP5, SH7785 and `idemu-shm` devices). Source and recipe: [src/qemu](src/qemu) and
@@ -45,6 +45,7 @@ New environment → iDrive version → car model → required files → paramete
   coding, vehicle services) kept outside the system images.
 * **Virtual controller**: rotor, push, tilt and buttons on screen and on the keyboard; mouse as touch screen.
 * **Virtual car**: CAN signals, scenarios, record/replay and a TCP server; GPS with NMEA/UBX output and GPX routes; cluster and HUD views (iDrive 5/6).
+* **Rear-view camera**: your computer's webcam is shown over the display when reverse is engaged on the virtual CAN bus, with parking guide lines (see [docs/CAMERA.md](docs/CAMERA.md)). Host-side overlay: the emulated HMI does not receive the video.
 * **Your own car from its VIN**: the type key (VIN characters 4–7) is decoded with the KIS database of your PSdZData into chassis, body, engine, model year,
   market and iDrive generation, and the new environment is set up to match. iDrive 5/6 head units can be **Navigation Professional**, **Business** or **EntryNav**.
 * **System files, unpacked**: one click extracts the SWFL/HAR packages (or the built image) into normal files you can browse in the app or open in Finder.

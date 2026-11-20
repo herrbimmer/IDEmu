@@ -367,6 +367,8 @@
           h('span', null, !sp.writable ? IDE.t('Sem permissão para gravar nesta pasta.') : IDE.t('{size} livres neste disco.', { size: IDE.fmtSize(sp.free) }) + (sp.free < MIN_FREE ? ' ' + IDE.t('É preciso ao menos 1 GB.') : (low ? ' ' + IDE.t('O iDrive 5 e 6 usam cerca de 3 GB por ambiente.') : '')))) : null,
         direct ? h('p', { class: 'help' }, 'No iDrive 7 e 8 a imagem do sistema (alguns GB) é única e compartilhada: ela fica na pasta do IDEmu. Na pasta escolhida ficam os dados e os logs do ambiente.') : null);
     }
+    // CIC: o HMI fala o idioma da interface do IDEmu (os que o CIC não tem ficam em inglês; ver LANGUAGES em idemu/cic.py)
+    const CIC_LANG = { en: 'en_GB', pt: 'pt_PT', es: 'es_ES', fr: 'fr_FR', de: 'de_DE', it: 'it_IT', tr: 'tr_TR', ru: 'ru_RU' };
     function roleBlock() {
       const opts = [['hu', 'Tela central', '1920 × 720 · o menu inicial do iDrive 7'], ['rse', 'Banco traseiro (RSE)', '1920 × 1080 · a tela de entretenimento dos bancos de trás']];
       return h('section', { class: 'vmhome' },
@@ -623,7 +625,7 @@
     /* ---------------- criar + build ---------------- */
     function bodyFromState() {
       if (genObj() && genObj().direct) return { kind: genObj().direct, home: W.home || '', role: genObj().direct === 'mgu7' ? W.role : undefined,
-        coding: W.vin ? { vin: W.vin.vin } : undefined, model_name: W.vin && W.vin.env ? [W.vin.chassis, W.vin.env.model_name].filter(Boolean).join(' ') : undefined, name: W.nameTouched && W.name.trim() ? W.name.trim() : genObj().name + (genObj().direct === 'mgu7' ? (W.role === 'rse' ? ' RSE' : ' CID') : genObj().direct === 'cic' ? '' : ' G70') };
+        coding: genObj().direct === 'cic' ? Object.assign({ language: CIC_LANG[IDE.lang()] || 'en_GB' }, W.vin ? { vin: W.vin.vin } : {}) : W.vin ? { vin: W.vin.vin } : undefined, model_name: W.vin && W.vin.env ? [W.vin.chassis, W.vin.env.model_name].filter(Boolean).join(' ') : undefined, name: W.nameTouched && W.name.trim() ? W.name.trim() : genObj().name + (genObj().direct === 'mgu7' ? (W.role === 'rse' ? ' RSE' : ' CID') : genObj().direct === 'cic' ? '' : ' G70') };
       return {
         home: W.home || '', name: W.name.trim(), series: W.series, chassis: W.chassis, brand: brand(),
         swfl: Object.fromEntries(Object.keys(W.swfl).map((k) => [k, W.swfl[k].path])),

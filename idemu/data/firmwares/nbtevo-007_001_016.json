@@ -8,6 +8,10 @@
     "brand": "swfl_00002719.bin.007_001_016"
   },
   "hmi_sha256": "6f2e2cb2e1f07f74c4be9b85d4608d56f063682dad235bf5e43ba882ff3d9eb7",
+  "library_sha256": {
+    "libhmicom.so": "5c684b5e895bbdb7e0c3c15c57b4b8384138652e409228014043e5dc6305b7f0",
+    "libhmicoding.so": "2096b6e9451dc21a1b3a191ef00af6ba617c2ffe0e2200b8b95956b43535a82b"
+  },
   "display": "10_25_1440x540",
   "hu_variant": "professional",
   "comment_addresses": "Absolute addresses of INTERNAL functions/objects inside HmiMain3D (the binary is stripped - no symbols; addresses recovered by analysis). THIS is what changes from build to build and must live in the profile, not in the shim code. mech: patch=overwrite a branch (hk_patch), tramp=trampoline with return (hk_tramp/hk_tdc_tramp), call=called from inside a hook body, glob=global object/constant.",

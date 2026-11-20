@@ -515,6 +515,19 @@ class Runtime:
         self._start_ssh()
         if self.stop_ev.is_set(): self._kill_children()       # parado enquanto os serviços subiam
 
+    def _start_sim(self):
+        """Simuladores de CAN e GPS do IDEmu sem ligação com o HMI (CIC, iDrive 7 e 8): alimentam só o cluster/HUD virtual e as portas TCP
+        (CAN em can_port, NMEA em gps_port). Os do iDrive 5/6 fazem o mesmo e ainda levam os dados ao HMI por MOST (_start_services)."""
+        net = self.env.get('net', {})
+        try:
+            from . import canbus, gps
+            if self.can is None:
+                self.can = canbus.CanBus(tcp_port=net.get('can_port'), rec_dir=os.path.join(self.env_dir, 'recordings')); self.can.start()
+            if self.gps is None:
+                self.gps = gps.GpsSim(can=self.can, tcp_port=net.get('gps_port')); self.gps.start()
+        except Exception as e:
+            self.con.append('[idemu] CAN/GPS: %s' % e)
+
     def _start_ssh(self):
         """sshd sem root ligado ao shell.sock (console do guest)."""
         try:

@@ -20,6 +20,9 @@ Verificado no ambiente `f30-idrive-5` (criado neste teste, pode ser apagado): me
 O pacote `001_060_001`, que `System files/ID5` chama de ID5, é outra coisa: um NBT Evo mais antigo com o HMI em `opt/hmi/ID4`. Os endereços fixos do shim não valem para esse binário; não foi testado.
 
 ## iDrive 8 (MGU22)
+
+**Cluster e HUD virtuais (CIC, iDrive 7 e 8, 2026-11-10):** `Runtime._start_sim()` liga os simuladores de CAN e GPS do IDEmu (portas `can_port`/`gps_port`) nesses ambientes e as abas **CAN** e **Cluster e HUD** passam a existir. Eles alimentam só o painel virtual (`GET /api/cluster`, velocidade, rotação, luzes, GPS): o HMI dessas gerações **não** recebe esses sinais, então a matriz continua marcando "CAN" como não funcionando. Verificado nos três: `can.set_signal('vehicle_speed', 88)` aparece no `cluster.snapshot`.
+**SSH (2026-11-10):** o shell do guest (`ttyAMA0`, o stdin do QEMU é o FIFO `console.in` e a saída vai para `logs/console.log`) também fica em `shell.sock` (`runtime.ConsoleMux`, `MguRuntime._con_write`/`_tail_console`) e o `sshd` do IDEmu abre a sessão nele quando o HMI desenha. Testado: `ssh -F <ambiente>/ssh/ssh_config idemu 'uname -sr; id'` → `Linux 5.15.123`, `uid=0(root)`, em 0,2 s por comando (o BusyBox do guest não aceita `head -5`; use `head -n 5`). A aba **SSH** do app aparece também para o iDrive 8.
 **Roda dentro do IDEmu, com a interface real e controles funcionando** (captura em `docs/verif_idrive8.png`). Em **Novo ambiente**, escolha **iDrive 8**: ele lê os arquivos direto da PSdZData configurada, monta a imagem (2 min no máximo, 4 GB em `mgu22/`, compartilhada entre ambientes) e aparece como um ambiente comum. O HMI desenha a tela completa cerca de 15 s depois de iniciar.
 
 Fora da interface web:

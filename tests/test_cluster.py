@@ -79,7 +79,7 @@ class LevelTest(unittest.TestCase):
 
     def test_order_and_names(self):
         pct = {g['id']: g['level']['pct'] for g in catalog.GENERATIONS}
-        self.assertGreater(pct['id6'], pct['id5']); self.assertGreater(pct['id5'], pct['id8']); self.assertGreater(pct['id8'], pct['id7'])
+        self.assertGreater(pct['id6'], pct['id5']); self.assertGreater(pct['id6'], pct['id8']); self.assertGreater(pct['id8'], pct['id7'])
         self.assertEqual(catalog.level_of('id6')['name'], 'Alto'); self.assertEqual(catalog.level_of('id7')['name'], 'Baixo')
         self.assertIn('level', catalog.build_catalog(None)['generations'][0])
 

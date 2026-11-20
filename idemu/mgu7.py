@@ -376,7 +376,7 @@ class Mgu7Runtime(runtime.Runtime):
         if s is None: return
         self._con = s; log = open(os.path.join(self.logd, 'console.log'), 'wb'); tail = b''
         if self.mux is None:                      # o shell do guest (ttyS2) também fica em shell.sock e no SSH
-            self.mux = runtime.ConsoleMux(os.path.join(self.run, 'shell.sock'), self._con_write); self.mux.start(); self._start_ssh()
+            self.mux = runtime.ConsoleMux(os.path.join(self.run, 'shell.sock'), self._con_write); self.mux.start(); self._start_ssh(); self._start_sim()
         try:
             while not self.stop_ev.is_set():
                 d = s.recv(4096)

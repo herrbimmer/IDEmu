@@ -4,8 +4,10 @@ set -e
 Q=${CIC_QEMU:-$HOME/id4-qemu/qemu-11.1.2}
 B=${CIC_BUILD:-$HOME/id4-qemu/build}
 H=$(cd "$(dirname "$0")" && pwd)
+# sed -i portátil (BSD/macOS exige sufixo separado, GNU/Linux não aceita '' separado): grava um .bak e o apaga
+sedi() { sed -i.idemu-bak "$@" && rm -f "${@: -1}.idemu-bak"; }
 cp "$H"/cic.c "$H"/cic_soc.c "$H"/cic_scif.c "$H"/cic_pci.c "$H"/cic.h "$Q/hw/sh4/"
-grep -q CONFIG_CIC "$Q/hw/sh4/meson.build" || sed -i '' "s|^hw_arch += {'sh4': sh4_ss}|sh4_ss.add(when: 'CONFIG_CIC', if_true: files('cic.c', 'cic_soc.c', 'cic_scif.c', 'cic_pci.c'))\nhw_arch += {'sh4': sh4_ss}|" "$Q/hw/sh4/meson.build"
+grep -q CONFIG_CIC "$Q/hw/sh4/meson.build" || sedi "s|^hw_arch += {'sh4': sh4_ss}|sh4_ss.add(when: 'CONFIG_CIC', if_true: files('cic.c', 'cic_soc.c', 'cic_scif.c', 'cic_pci.c'))\nhw_arch += {'sh4': sh4_ss}|" "$Q/hw/sh4/meson.build"
 grep -q "config CIC" "$Q/hw/sh4/Kconfig" || cat >> "$Q/hw/sh4/Kconfig" <<'EOK'
 
 config CIC
@@ -102,7 +104,7 @@ s = s[:i] + "/* cic: hypercall do IDEmu (trapa #0xC3) */\nextern bool (*sh4_cic_
 open(h, 'w').write(s)
 EOP
 # SH-4A tem movua.l (acesso desalinhado, pode cruzar páginas): wrap 32 bits em vez de abort
-grep -q "pointer_wrap = cpu_pointer_wrap_uint32" "$Q/target/sh4/cpu.c" || sed -i '' 's/\.pointer_wrap = cpu_pointer_wrap_notreached/.pointer_wrap = cpu_pointer_wrap_uint32/' "$Q/target/sh4/cpu.c"
+grep -q "pointer_wrap = cpu_pointer_wrap_uint32" "$Q/target/sh4/cpu.c" || sedi 's/\.pointer_wrap = cpu_pointer_wrap_notreached/.pointer_wrap = cpu_pointer_wrap_uint32/' "$Q/target/sh4/cpu.c"
 # URC (contador aleatório da UTLB) nunca deve alcançar URB: as entradas URB..63 são "fixas" (wired)
 grep -q "urc >= urb" "$Q/target/sh4/helper.c" || python3 - "$Q/target/sh4/helper.c" <<'EOP'
 import sys
@@ -111,7 +113,7 @@ s = s.replace('if ((urb > 0 && urc > urb) || urc > (UTLB_SIZE - 1))', 'if ((urb 
 open(p, 'w').write(s)
 EOP
 # SH7785 no modo de endereçamento de 32 bits: o PPN da UTLB vai até o bit 31 (o QEMU corta em 29 bits e joga a janela PCI em 0x1bxxxxxx)
-grep -q "cic: PPN32" "$Q/target/sh4/helper.c" || { sed -i '' 's/(mem_value \& 0x1ffffc00) >> 10/(mem_value \& 0xfffffc00) >> 10; \/* cic: PPN32 *\//' "$Q/target/sh4/helper.c"; sed -i '' 's/#define PTEL_PPN_BITS (19)/#define PTEL_PPN_BITS (22)/' "$Q/target/sh4/cpu.h"; }
+grep -q "cic: PPN32" "$Q/target/sh4/helper.c" || { sedi 's/(mem_value \& 0x1ffffc00) >> 10/(mem_value \& 0xfffffc00) >> 10; \/* cic: PPN32 *\//' "$Q/target/sh4/helper.c"; sedi 's/#define PTEL_PPN_BITS (19)/#define PTEL_PPN_BITS (22)/' "$Q/target/sh4/cpu.h"; }
 # interrupções IRL (INTEVT 0x200..0x3e0) têm nível fixo codificado no vetor: nível = (0xf0 - (vetor-0x200)/2) >> 4;
 # o sh_intc ignora prioridade (FIXME deles), o que gera tempestade quando o ISR roda com IMASK == nível
 grep -q "cic: IRL" "$Q/hw/intc/sh_intc.c" || python3 - "$Q/hw/intc/sh_intc.c" <<'EOP'

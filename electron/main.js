@@ -1,7 +1,7 @@
 'use strict';
 // IDEmu desktop: abre a interface em uma janela do Electron. O servidor continua sendo o mesmo (python3 -m idemu gui),
 // iniciado aqui como processo filho numa porta livre e encerrado junto com a janela.
-const { app, BrowserWindow, dialog, ipcMain, shell, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, Menu, systemPreferences } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const net = require('net');
@@ -57,6 +57,15 @@ function createWindow() {
   const here = 'http://127.0.0.1:' + port;
   win.webContents.setWindowOpenHandler(({ url }) => { if (!url.startsWith(here)) shell.openExternal(url); return { action: url.startsWith(here) ? 'allow' : 'deny' }; });
   win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(here)) { e.preventDefault(); shell.openExternal(url); } });
+  // câmera de ré virtual: a webcam (só vídeo, sem áudio) só é liberada para a própria interface; o resto segue o comportamento padrão do Electron
+  win.webContents.session.setPermissionRequestHandler((wc, permission, cb, details) => {
+    if (permission !== 'media') return cb(true);
+    const types = (details && details.mediaTypes) || [];
+    const ok = String((details && details.requestingUrl) || '').startsWith(here) && types.length > 0 && types.every((t) => t === 'video');
+    if (!ok) return cb(false);
+    if (process.platform !== 'darwin') return cb(true);
+    systemPreferences.askForMediaAccess('camera').then(cb, () => cb(false));      // macOS: pede a permissão de câmera ao sistema
+  });
   win.loadURL(here + '/');
   win.on('closed', () => { win = null; });
 }

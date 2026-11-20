@@ -16,7 +16,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, 'idemu', 'web')
 I18N_JS = os.path.join(WEB, 'i18n.js')
-JS_FILES = ['util.js', 'wizard.js', 'tabs.js', 'cluster.js', 'run.js', 'coding.js', 'app.js', 'stats.js', 'envtools.js', 'packages.js', 'onboarding.js']
+JS_FILES = ['util.js', 'wizard.js', 'tabs.js', 'cluster.js', 'camera.js', 'run.js', 'coding.js', 'app.js', 'stats.js', 'envtools.js', 'packages.js', 'onboarding.js']
 PY_FILES = ['server', 'catalog', 'runtime', 'builder', 'gps', 'sshbridge', 'canbus', 'coding', 'codegen', 'swfl', 'ifs', 'guestfs', 'most', 'v850', 'sshshell', 'stats', 'vin', 'sysfiles', 'mgu7', 'mgu', 'cic', 'phone', 'coding7', 'coding8']
 
 DIACRITICS = re.compile(r'[áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ]')
