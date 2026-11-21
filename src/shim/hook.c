@@ -34,6 +34,13 @@ void *hk_tramp(u32 a,void *fn){ if(!a||!fn){ br_logx("hook: invalid trampoline t
   t[0]=tramp_ins(a,0,t); t[1]=tramp_ins(a,1,t); t[2]=0xe51ff004; t[3]=a+8;
   if(hk_patch((void*)a,fn)){ munmap(t,4096); return 0; } return t; }
 
+static u32 profile_abi;
+static u32 home_power_flag=HOME_POWER_FLAG,home_aux_flag=HOME_AUX_FLAG,main_home_offset=MAIN_HOME_OFFSET;
+static u32 profile_words[9][4];
+static const char *PROFILE_SIG_NAME[]={
+  "setup_screen_registered","pmd_fullon","pm_fullon","set_power_mode","make_ctrl_event_B",
+  "ccs_push_button","map_surface_map","map_surface_unmap","map_notify_update"
+};
 typedef struct { u32 addr,w0,w1,w2,w3; const char *name; } profile_sig;
 static int sig_words_ok(const profile_sig *s,const u32 *p){
   if(p[0]!=s->w0||p[1]!=s->w1||p[2]!=s->w2||p[3]!=s->w3){
@@ -43,9 +50,7 @@ static int sig_words_ok(const profile_sig *s,const u32 *p){
 }
 static int sig_ok(const profile_sig *s){
   if(!s->addr){ br_logx(s->name,0xdead1e,0,0); return 0; }
-#if PROFILE_CHECK
-  return sig_words_ok(s,(const u32*)s->addr);
-#endif
+  if(PROFILE_CHECK||profile_abi) return sig_words_ok(s,(const u32*)s->addr);
   return 1;
 }
 static void *sig_tramp(const profile_sig *s,void *fn){ return sig_ok(s)?hk_tramp(s->addr,fn):0; }
@@ -99,10 +104,25 @@ static const char *AD_NAME[] = {
   "home_app_handler","ccs_push_button","ctrl_listener_group_id","cb_vtable_const",
   "tdc_tramp_vtable_const" };
 static int ad_hx(char c){ if(c>='0'&&c<='9')return c-'0'; if(c>='a'&&c<='f')return c-'a'+10; if(c>='A'&&c<='F')return c-'A'+10; return -1; }
+static int ad_name_eq(const char*s,long n,const char*name){ long i=0; while(i<n&&name[i]&&s[i]==name[i]) i++; return i==n&&!name[i]; }
+static int ad_field(const char*s,long n){
+  static const char *meta[]={"profile_abi","home_power_flag","home_aux_flag","main_home_offset"};
+  u32 i; for(i=0;i<29;i++) if(ad_name_eq(s,n,AD_NAME[i])) return i;
+  for(i=0;i<4;i++) if(ad_name_eq(s,n,meta[i])) return 29+i;
+  if(n>6&&!memcmp(s,"sig_",4)&&s[n-2]=='_'&&s[n-1]>='0'&&s[n-1]<='3')
+    for(i=0;i<9;i++) if(ad_name_eq(s+4,n-6,PROFILE_SIG_NAME[i])) return 33+i*4+s[n-1]-'0';
+  return -1;
+}
+static int ad_runtime_required(u32 k){
+  if(!strcmp(AD_NAME[k],"map_redirection_obj")) return 1;
+  for(u32 i=0;i<9;i++) if(!strcmp(AD_NAME[k],PROFILE_SIG_NAME[i])) return 1;
+  return 0;
+}
 static int addr_load(void){ int fd=open("/fs/shim/addr.tab",0);
   if(fd<0){ if(*__get_errno_ptr()==2) return 0; goto invalid; } /* ENOENT keeps the compiled reference profile. */
   static char b[8192]; long n=0,r=0; while(n<(long)sizeof b&&(r=read(fd,b+n,sizeof b-n))>0) n+=r; close(fd);
-  enum { NF=sizeof AD_NAME/sizeof AD_NAME[0] }; u32 pending[NF],seen=0;
+  enum { NF=sizeof AD_NAME/sizeof AD_NAME[0], NT=NF+4+9*4 }; u32 pending[NT],count=0; u8 seen[NT];
+  memset(seen,0,sizeof seen); /* Avoid compiler-emitted __aeabi_memclr8, absent from the firmware libc. */
   if(r<0||!n||n==(long)sizeof b||b[n-1]!='\n') goto invalid;
   for(long i=0;i<n;){ while(i<n&&(b[i]==' '||b[i]=='\t'||b[i]=='\r'||b[i]=='\n')) i++;
     if(i==n) break;
@@ -111,16 +131,34 @@ static int addr_load(void){ int fd=open("/fs/shim/addr.tab",0);
     while(i<n&&(b[i]==' '||b[i]=='\t')) i++;
     if(i+1>=n||b[i]!='0'||(b[i+1]|32)!='x') goto invalid; i+=2;
     u32 v=0,digits=0; int d; while(i<n&&(d=ad_hx(b[i]))>=0){ if(++digits>8) goto invalid; v=v*16+d; i++; }
-    if(!digits||!v||(v&3)) goto invalid;
+    if(!digits) goto invalid;
     while(i<n&&(b[i]==' '||b[i]=='\t'||b[i]=='\r')) i++;
     if(i==n||b[i++]!='\n') goto invalid;
-    u32 k; for(k=0;k<NF;k++){ const char*m=AD_NAME[k]; long j=0;
-      while(j<nl&&m[j]&&m[j]==b[s+j]) j++;
-      if(j==nl&&!m[j]) break; }
-    if(k==NF||(seen&(1u<<k))) goto invalid;
-    pending[k]=v; seen|=1u<<k; }
-  if(seen!=(1u<<NF)-1) goto invalid;
-  memcpy(&AD,pending,sizeof AD); br_logx("addr.tab: overrides carregados",NF,0,0); return 0;
+    int k=ad_field(b+s,nl);
+    if(k<0||seen[k]) goto invalid;
+    pending[k]=v; seen[k]=1; count++; }
+  if(count!=NF&&count!=NT) goto invalid;
+  for(u32 i=0;i<count;i++) if(!seen[i]) goto invalid;
+  if(count==NF){
+    for(u32 i=0;i<NF;i++) if(!pending[i]||(pending[i]&3)) goto invalid;
+  } else {
+    if(pending[NF]!=1) goto invalid;
+    for(u32 i=NF+1;i<NF+4;i++) if(!pending[i]||pending[i]>=0x10000) goto invalid;
+    if(pending[NF+1]==pending[NF+2]||(pending[NF+3]&3)) goto invalid;
+    for(u32 i=0;i<NF;i++){
+      if(ad_runtime_required(i)){ if(!pending[i]||(pending[i]&3)) goto invalid; }
+      else if(pending[i]) goto invalid;
+    }
+    for(u32 i=NF+4;i<NT;i++) if(!pending[i]) goto invalid;
+  }
+  /* Publish addresses and policy together only after the complete table passed. */
+  memcpy(&AD,pending,sizeof AD);
+  profile_abi=count==NT?pending[NF]:0;
+  home_power_flag=count==NT?pending[NF+1]:HOME_POWER_FLAG;
+  home_aux_flag=count==NT?pending[NF+2]:HOME_AUX_FLAG;
+  main_home_offset=count==NT?pending[NF+3]:MAIN_HOME_OFFSET;
+  if(count==NT) memcpy(profile_words,pending+NF+4,sizeof profile_words); else memset(profile_words,0,sizeof profile_words);
+  br_logx("addr.tab: overrides carregados",NF,profile_abi,count); return 0;
 invalid:
   br_log("addr.tab: invalid or incomplete table; refusing HMI hooks"); return -1; }
 #define HMI_ADDR(member,fallback) (AD.member)
@@ -158,15 +196,15 @@ static void (*map_notify)(void*,u32);
 static u8 *app_pu;
 /* Ligar o HMI ("auto power on"): no thread principal (updateAliveTime). */
 static void auto_power_on(void){ static int t,done,failed;
-#ifdef HMI_PROFILE_006016
   /* TLS returns the caller's proc unit, including non-application units.
      setPowerMode needs the captured application object on its own thread. */
+#ifndef HMI_PROFILE_FIXED
   if(!get_proc||!app_pu||get_proc()!=app_pu) return;
 #endif
   if(done||!hook_home()||++t<=AUTO_POWER_TICKS) return; done=1;
   if(!get_proc||!power_set){ if(!failed++){ br_log("power: unresolved get_proc/power_set"); } return; }
   u8*pu=get_proc(); if(!pu){ if(!failed++){ br_log("power: no main proc unit"); } return; }
-  br_log("auto power on"); power_set(pu,3); ((u8*)hook_home())[HOME_POWER_FLAG]=1; ((u8*)hook_home())[HOME_AUX_FLAG]=0; }
+  br_log("auto power on"); power_set(pu,3); ((u8*)hook_home())[home_power_flag]=1; ((u8*)hook_home())[home_aux_flag]=0; }
 /* Entrada do host: thread própria a cada 15 ms. Antes era lida em updateAliveTime, que com o relógio correto do guest (cntfrq) só roda ~1x/s com a tela parada: cada comando atrasava até 1 s.
    O giro do rotor vai direto para a fila do proc unit (vt[7]). Botões e comandos de depuração usam funções que exigem o thread principal (getHmiProcUnit por TLS, com assert): ficam num anel que
    hk_alive esvazia, e um evento vazio na fila acorda o laço principal para isso acontecer logo. */
@@ -183,11 +221,9 @@ void input_pump(void){ u32 *p,*rep; u32 n;
   LOCK(); p=br_begin(OP_GETINPUT,0); n=br_sync(&rep); static u32 ev[64*4]; if(n>sizeof ev) n=sizeof ev; memcpy(ev,rep,n); UNLOCK();
   int wake=0;
   for(u32 i=0;i<n/16;i++){ u32 *e=ev+i*4;
-    if(e[0]==40){ touch_send(e[1],e[2]&0xffff,e[2]>>16,e[3]==0xffff?0:e[3]); continue; }   /* toque: direto da thread de entrada (a entrega é assíncrona) e sem o evento de controlador que "acordaria" o laço: ele faria o HMI achar que o iDrive tomou a entrada */
+    if(e[0]==40){ if(HMI_FEATURE_TOUCH&&!profile_abi) touch_send(e[1],e[2]&0xffff,e[2]>>16,e[3]==0xffff?0:e[3]); continue; }   /* toque: direto da thread de entrada (a entrega é assíncrona) e sem o evento de controlador que "acordaria" o laço: ele faria o HMI achar que o iDrive tomou a entrada */
     if(e[0]==2){ push_ctrl(e[1],0,(int)e[2]); continue; }   /* rotary: key=13 right / 14 left, val=detents */
-#if HMI_FEATURE_MAP
-    if(e[0]==30){ void *rd=*(void**)HMI_ADDR(map_redirection_obj,A_MAP_REDIRECTION); if(rd&&map_notify) map_notify(rd,e[1]); continue; }   /* imagem nova do mapa: o que o sinal do LayerManager faria (CHmiSurfaceRedirection::notifyUpdate) */
-#endif
+    if(HMI_FEATURE_MAP&&e[0]==30){ void *rd=*(void**)HMI_ADDR(map_redirection_obj,A_MAP_REDIRECTION); if(rd&&map_notify) map_notify(rd,e[1]); continue; }   /* imagem nova do mapa: o que o sinal do LayerManager faria (CHmiSurfaceRedirection::notifyUpdate) */
     if(ring_w-ring_r<RINGN){ memcpy(ring[ring_w%RINGN],e,16); __atomic_add_fetch(&ring_w,1,__ATOMIC_RELEASE); wake=1; }
   }
   if((wake||ilm_main_want)&&!wake_pending){ wake_pending=1; push_ctrl(0,0,0); }   /* um só evento de acordar até o thread da aplicação passar por input_main: com ele ocupado (abrindo um menu) saíam dezenas, um a cada 15 ms */
@@ -206,6 +242,7 @@ static void *hk_tdc_b(void *t,u32 a,u32 b){ void *r=tdc_c2(t,a,b); if(!tdc_clien
 static void touch_enable(void){ u32 *l=*(u32**)((u8*)tdc_client+0x1fc); if(!l||!l[2]) return; int key=1; u8 *p=((u8*(*)(void*,int*))HMI_ADDR(map_int_bool_find,0x2a01514))((u8*)l[2]+0x28,&key);
   if(!*p){ *p=1; br_logx("touch: origem 1 habilitada",(u32)p,0,0); } }
 static void touch_send(u32 state,u32 x,u32 y,u32 hms){
+  if(!HMI_FEATURE_TOUCH||profile_abi) return;
   if(!tdc_client){ static int n; if(n++<5) br_logx("touch: sem cliente",state,x,y); return; }
   touch_enable();
   /* sem o monitor de verdade, o serviço de display acha que a tela está apagada e usa o primeiro toque só para acordá-la: marca como ligada */
@@ -227,14 +264,12 @@ static void input_main(u8 *pu){
   static int busy; if(busy) return; busy=1; wake_pending=0;
   while(ring_r!=__atomic_load_n(&ring_w,__ATOMIC_ACQUIRE)){ u32 ee[4]; memcpy(ee,ring[ring_r%RINGN],16); __atomic_add_fetch(&ring_r,1,__ATOMIC_RELEASE); u32 *e=ee;
     if(e[0]==1&&e[3]==1){ push_ctrl(e[1],e[2]!=0,1); }
-    else if(e[0]==40){ touch_send(e[1],e[2]&0xffff,e[2]>>16,e[3]==0xffff?0:e[3]); }
-#if HMI_FEATURE_DEBUG
-    else if(e[0]==9){ void*h=hook_home(); br_logx("home app",(u32)h,h?*((u8*)h+0x338):0,0); if(h) ((void(*)(void*,int))HMI_ADDR(home_app_handler,0x2f7114))(h,e[1]); }
-    else if(e[0]==7){ u8 *o=((u8*(*)(void))HMI_ADDR(dbg_obj_get,0x228384))(); u8 *x=o?*(u8**)(o+8):0; u8 *h=x?((u8*(*)(void*))HMI_ADDR(dbg_handler_get,0x60af10))(x):0; br_logx("dbg obj",(u32)o,(u32)x,(u32)h); if(h){ u32 vt=*(u32*)h; br_logx("dbg handler vt",vt,*(u32*)(vt+0xc),*(u32*)(vt+8)); } }
-    else if(e[0]==6){ br_logx("force display",(u32)disp_svc,disp_svc?disp_svc[0x3c]:0,disp_svc?disp_svc[0x3d]:0); if(disp_svc){ disp_svc[0x3c]=1; disp_svc[0x3d]=1; ((void(*)(void*,int))HMI_ADDR(eds_display_enable,0x2df744))(disp_svc,1); } }
-    else if(e[0]==5){ u8*h=(u8*)hook_home(); if(h){ br_logx("home flags",h[0x338]|h[0x339]<<8|h[0x33a]<<16|h[0x33b]<<24,h[0x33c],e[1]); h[0x33b]=e[1]; h[0x33a]=e[2]; } }
-    else if(e[0]==8){ void*h=hook_home(); int N=-1; for(int o=-0x2000;o<0x2000&&h;o+=4){ if(*(void**)(pu+o+MAIN_HOME_OFFSET)==h){ N=o; break; } } br_logx("powermode this-offset",N,(u32)h,e[1]); if(N!=-1&&power_set) power_set(pu+N,e[1]); }
-#endif
+    else if(e[0]==40){ if(HMI_FEATURE_TOUCH&&!profile_abi) touch_send(e[1],e[2]&0xffff,e[2]>>16,e[3]==0xffff?0:e[3]); }
+    else if(HMI_FEATURE_DEBUG&&!profile_abi&&e[0]==9){ void*h=hook_home(); br_logx("home app",(u32)h,h?*((u8*)h+0x338):0,0); if(h) ((void(*)(void*,int))HMI_ADDR(home_app_handler,0x2f7114))(h,e[1]); }
+    else if(HMI_FEATURE_DEBUG&&!profile_abi&&e[0]==7){ u8 *o=((u8*(*)(void))HMI_ADDR(dbg_obj_get,0x228384))(); u8 *x=o?*(u8**)(o+8):0; u8 *h=x?((u8*(*)(void*))HMI_ADDR(dbg_handler_get,0x60af10))(x):0; br_logx("dbg obj",(u32)o,(u32)x,(u32)h); if(h){ u32 vt=*(u32*)h; br_logx("dbg handler vt",vt,*(u32*)(vt+0xc),*(u32*)(vt+8)); } }
+    else if(HMI_FEATURE_DEBUG&&!profile_abi&&e[0]==6){ br_logx("force display",(u32)disp_svc,disp_svc?disp_svc[0x3c]:0,disp_svc?disp_svc[0x3d]:0); if(disp_svc){ disp_svc[0x3c]=1; disp_svc[0x3d]=1; ((void(*)(void*,int))HMI_ADDR(eds_display_enable,0x2df744))(disp_svc,1); } }
+    else if(HMI_FEATURE_DEBUG&&!profile_abi&&e[0]==5){ u8*h=(u8*)hook_home(); if(h){ br_logx("home flags",h[0x338]|h[0x339]<<8|h[0x33a]<<16|h[0x33b]<<24,h[0x33c],e[1]); h[home_power_flag]=e[1]; h[home_aux_flag]=e[2]; } }
+    else if(HMI_FEATURE_DEBUG&&!profile_abi&&e[0]==8){ void*h=hook_home(); int N=-1; for(int o=-0x2000;o<0x2000&&h;o+=4){ if(*(void**)(pu+o+main_home_offset)==h){ N=o; break; } } br_logx("powermode this-offset",N,(u32)h,e[1]); if(N!=-1&&power_set) power_set(pu+N,e[1]); }
     else if(e[0]==1){ /* button: key event + controller event, as CHmiCCSController::onCCSPushButton does */
       if(ccs_button) ccs_button(e[1],e[2]!=0,0,0); push_ctrl(e[1],e[2]!=0,1); }
   }
@@ -296,22 +331,26 @@ void install_hooks(void){ static int done; if(__atomic_exchange_n(&done,1,__ATOM
 #ifdef CRASHHK   /* diagnóstico de quedas (-DCRASHHK): ligado, o iDrive 5 não termina de subir (sinal capturado no boot); desligado por padrão */
   signal(11,(void(*)(int))crash_h); signal(10,(void(*)(int))crash_h); signal(4,(void(*)(int))crash_h); signal(8,(void(*)(int))crash_h);
 #endif
-  const profile_sig stc={HMI_ADDR(setup_screen_registered,A_STC),W0_STC,W1_STC,W2_STC,W3_STC,"stc"};
-  const profile_sig pmd={HMI_ADDR(pmd_fullon,A_PMD),W0_PMD,W1_PMD,W2_PMD,W3_PMD,"pmd"};
-  const profile_sig pm={HMI_ADDR(pm_fullon,A_PM),W0_PM,W1_PM,W2_PM,W3_PM,"pm"};
-  const profile_sig pwr={HMI_ADDR(set_power_mode,A_POWER_SET),W0_POWER_SET,W1_POWER_SET,W2_POWER_SET,W3_POWER_SET,"power_set"};
-  const profile_sig cev={HMI_ADDR(make_ctrl_event_B,A_CTRL_EVENT),W0_CTRL_EVENT,W1_CTRL_EVENT,W2_CTRL_EVENT,W3_CTRL_EVENT,"ctrl_event"};
-  const profile_sig cbtn={HMI_ADDR(ccs_push_button,A_CCS_BUTTON),W0_CCS_BUTTON,W1_CCS_BUTTON,W2_CCS_BUTTON,W3_CCS_BUTTON,"ccs_button"};
-  const profile_sig maps={HMI_ADDR(map_surface_map,A_MAPSURF),W0_MAPSURF,W1_MAPSURF,W2_MAPSURF,W3_MAPSURF,"mapsurf"};
-  const profile_sig unmap={HMI_ADDR(map_surface_unmap,A_UNMAP),W0_UNMAP,W1_UNMAP,W2_UNMAP,W3_UNMAP,"unmap"};
-  const profile_sig mn={HMI_ADDR(map_notify_update,A_MAP_NOTIFY),W0_MAP_NOTIFY,W1_MAP_NOTIFY,W2_MAP_NOTIFY,W3_MAP_NOTIFY,"map_notify"};
+  profile_sig stc={HMI_ADDR(setup_screen_registered,A_STC),W0_STC,W1_STC,W2_STC,W3_STC,"stc"};
+  profile_sig pmd={HMI_ADDR(pmd_fullon,A_PMD),W0_PMD,W1_PMD,W2_PMD,W3_PMD,"pmd"};
+  profile_sig pm={HMI_ADDR(pm_fullon,A_PM),W0_PM,W1_PM,W2_PM,W3_PM,"pm"};
+  profile_sig pwr={HMI_ADDR(set_power_mode,A_POWER_SET),W0_POWER_SET,W1_POWER_SET,W2_POWER_SET,W3_POWER_SET,"power_set"};
+  profile_sig cev={HMI_ADDR(make_ctrl_event_B,A_CTRL_EVENT),W0_CTRL_EVENT,W1_CTRL_EVENT,W2_CTRL_EVENT,W3_CTRL_EVENT,"ctrl_event"};
+  profile_sig cbtn={HMI_ADDR(ccs_push_button,A_CCS_BUTTON),W0_CCS_BUTTON,W1_CCS_BUTTON,W2_CCS_BUTTON,W3_CCS_BUTTON,"ccs_button"};
+  profile_sig maps={HMI_ADDR(map_surface_map,A_MAPSURF),W0_MAPSURF,W1_MAPSURF,W2_MAPSURF,W3_MAPSURF,"mapsurf"};
+  profile_sig unmap={HMI_ADDR(map_surface_unmap,A_UNMAP),W0_UNMAP,W1_UNMAP,W2_UNMAP,W3_UNMAP,"unmap"};
+  profile_sig mn={HMI_ADDR(map_notify_update,A_MAP_NOTIFY),W0_MAP_NOTIFY,W1_MAP_NOTIFY,W2_MAP_NOTIFY,W3_MAP_NOTIFY,"map_notify"};
 
-#ifdef HMI_PROFILE_006016
+  if(profile_abi==1){
   /* Refuse the whole profile before any code patch when one required site or
      companion export is missing. The host also checks all three exact hashes. */
-  const profile_sig *required[]={&stc,&pmd,&pm,&pwr,&cev,&cbtn,&maps,&unmap,&mn};
+  profile_sig *required[]={&stc,&pmd,&pm,&pwr,&cev,&cbtn,&maps,&unmap,&mn};
+  for(u32 i=0;i<9;i++){
+    required[i]->w0=profile_words[i][0]; required[i]->w1=profile_words[i][1];
+    required[i]->w2=profile_words[i][2]; required[i]->w3=profile_words[i][3];
+  }
   for(u32 i=0;i<sizeof required/sizeof required[0];i++) if(!sig_ok(required[i])){
-    br_log("006016: signature mismatch; refusing all HMI hooks"); return;
+    br_log("profile: signature mismatch; refusing all HMI hooks"); return;
   }
   const char *symbols[][2]={
     {"libhmicom.so","_Z14getHmiProcUnitv"},
@@ -326,9 +365,9 @@ void install_hooks(void){ static int done; if(__atomic_exchange_n(&done,1,__ATOM
     {"libhmicoding.so","_ZN17CHmiVariantServer12isVariantSetEj"}
   };
   for(u32 i=0;i<sizeof symbols/sizeof symbols[0];i++) if(!hk_sym(symbols[i][0],symbols[i][1])){
-    br_log("006016: missing companion export; refusing all HMI hooks"); return;
+    br_log("profile: missing companion export; refusing all HMI hooks"); return;
   }
-#endif
+  }
 
   get_proc=(u8*(*)(void))hk_sym("libhmicom.so","_Z14getHmiProcUnitv");
   proc_push=(void(*)(void*,void*))hk_sym("libhmicom.so","_ZN12CHmiProcUnit9pushEventEP9CHmiEvent");
@@ -348,19 +387,19 @@ void install_hooks(void){ static int done; if(__atomic_exchange_n(&done,1,__ATOM
   { void *a=hk_sym("libhmicom.so","_ZN12CHmiProcUnit15updateAliveTimeEv"); if(a) alive_tramp=(void(*)(void*))hk_tramp((u32)a,hk_alive); }
   { void *a=hk_sym("libhmicom.so","_ZN12CHmiProcUnitC2ER18CHmiMainDispatcherh"); if(a) pu_c2_tramp=(void*(*)(void*,void*,u32))hk_tramp((u32)a,hk_pu_c2); }
 
-#if HMI_FEATURE_TOUCH
+  if(HMI_FEATURE_TOUCH&&!profile_abi){
   eds_tramp=(u32(*)(void*,u32,u32,u32))hk_tramp(HMI_ADDR(eds_display_enable,0x2df744),hk_eds); eds2_tramp=(u32(*)(void*,u32,u32,u32))hk_tramp(HMI_ADDR(eds2_display_enable,0x2dfe98),hk_eds2);
   tdc_c1=(void*(*)(void*,u32,u32))hk_tdc_tramp(HMI_ADDR(touch_client_ctor1,0x2a24660),hk_tdc_a); tdc_c2=(void*(*)(void*,u32,u32))hk_tdc_tramp(HMI_ADDR(touch_client_ctor2,0x2a24e48),hk_tdc_b);
-#endif
-#if HMI_FEATURE_MAP
+  }
+  if(HMI_FEATURE_MAP){
   map_notify=(void(*)(void*,u32))sig_addr(&mn);
   sig_patch(&maps,hk_mapsurf); sig_patch(&unmap,hk_unmapsurf);
-#endif
-#if HMI_FEATURE_LUA
+  }
+  if(HMI_FEATURE_LUA&&!profile_abi){
   lua_err_tramp=(void(*)(u8*))hk_tramp(HMI_ADDR(lua_error,0x2a4e9b8),hk_luaerr);
-#endif
-#if HMI_FEATURE_TPM
+  }
+  if(HMI_FEATURE_TPM&&!profile_abi){
   tpm_tramp=(void(*)(u8*))hk_tramp(HMI_ADDR(tpm_update_status,0xd98b44),hk_tpm);
   hk_patch((void*)HMI_ADDR(tpm_timer_cb,0xd99218),hk_tpm_timer);
-#endif
+  }
 }

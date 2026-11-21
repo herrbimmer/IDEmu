@@ -39,10 +39,12 @@ python3 -m idemu gui   # the same, web interface at http://127.0.0.1:8765
 New environment → iDrive version → car model → required files → parameters → create → build (~20 s for iDrive 5/6) → start. Command line:
 `python3 -m idemu list | build <id> | run <id>`.
 
-For exact `006_016_002` / Build 66, select the separate `"shim_profile": "006016"`
-and build its guest libraries with the matching IFS libc. See
-[the profile and emulator validation](docs/PROFILE_006016.md) for hashes,
-cold-boot/N57/CarPlay results and limits; this build does not use the `1803` shim.
+The common NBT shim selects `006_016_002`, `007_001_016`, `007_030_001`,
+`007_039_008` and `007_051_002` through the exact-hash
+[JSON firmware registry](idemu/data/firmwares/README.md). No separate shim build
+or environment selector is needed for Build 66. See
+[its validation and limits](docs/PROFILE_006016.md); the upstream `1803` /
+`006_017_006` shim remains separate.
 
 ## Highlights
 

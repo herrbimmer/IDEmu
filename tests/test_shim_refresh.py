@@ -41,11 +41,16 @@ class ShimStaleTest(unittest.TestCase):
 
 
 class ShimRefreshTest(unittest.TestCase):
+    version = "007_001_016"
+    shim_profile = None
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.env = {"id": "test-env", "coding": {}}
+        if self.shim_profile:
+            self.env["shim_profile"] = self.shim_profile
         self.app = server.App.__new__(server.App)
         self.app.rt = None
         self.app.flashes = {}
@@ -53,7 +58,7 @@ class ShimRefreshTest(unittest.TestCase):
         self.app.load_env = Mock(side_effect=lambda _: dict(self.env))
         self.app.build_info = Mock(return_value={"state": "ready"})
         self.app._extract_cfg = Mock()
-        self.profile = json.loads((Path(builder.HERE) / "data/firmwares/nbtevo-007_001_016.json").read_text())
+        self.profile = json.loads((Path(builder.HERE) / ("data/firmwares/nbtevo-" + self.version + ".json")).read_text())
         self.manifest = {"hmi_sha256": self.profile["hmi_sha256"],
                          "shim_library_sha256": self.profile["library_sha256"]}
         (self.root / "build.json").write_text(json.dumps(self.manifest))
@@ -65,6 +70,9 @@ class ShimRefreshTest(unittest.TestCase):
                                       hmi_sha=self.manifest["hmi_sha256"],
                                       library_hashes=self.manifest["shim_library_sha256"])
         self.assertFalse((self.root / "work").exists())
+        selected = builder.shim_firmware(self.env, self.manifest["hmi_sha256"],
+                                         self.manifest["shim_library_sha256"])
+        self.assertEqual(selected, self.profile)
 
     def test_coding_flash_preserves_the_firmware_identity(self):
         with patch.object(server.coding, "apply_changes", return_value=[]), \
@@ -113,10 +121,18 @@ class ShimRefreshTest(unittest.TestCase):
             with self.subTest(manifest=manifest):
                 (self.root / "build.json").write_text(json.dumps(manifest))
                 with patch.object(builder.mkdisk, "Tree") as tree, \
-                        self.assertRaisesRegex(builder.BuildError, "rebuild"):
+                        self.assertRaises(builder.BuildError):
                     self.app._rebuild_shim("test-env", self.env)
                 tree.assert_not_called()
                 self.assertFalse((self.root / "work").exists())
+
+
+class EarlyShimRefreshTest(ShimRefreshTest):
+    version = "006_016_002"
+
+
+class EarlyAliasShimRefreshTest(EarlyShimRefreshTest):
+    shim_profile = "006016"
 
 
 

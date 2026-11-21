@@ -1,5 +1,5 @@
 /* Firmware-specific HMI addresses and feature switches for hook.c. */
-#if defined(HMI_PROFILE_1803) || defined(HMI_PROFILE_006016)
+#ifdef HMI_PROFILE_1803
 #define HMI_PROFILE_FIXED 1
 #define PROFILE_CHECK 1
 #define HMI_FEATURE_TOUCH 0
@@ -8,19 +8,6 @@
 #define HMI_FEATURE_LUA 0
 #define HMI_FEATURE_DEBUG 0
 
-#ifdef HMI_PROFILE_006016
-/* Exact 006_016_002 / ID5_1803-510-1749I Build 66, not the Build 71 profile. */
-#define A_STC 0x2f0064
-#define A_PMD 0x17f7080
-#define A_PM 0x17f7778
-#define A_POWER_SET 0x213b0c
-#define A_CTRL_EVENT 0x24795c
-#define A_CCS_BUTTON 0x2d6b64
-#define A_MAPSURF 0x27d81f4
-#define A_UNMAP 0x27d77d0
-#define A_MAP_NOTIFY 0x27d6f64
-#define A_MAP_REDIRECTION 0x383275c
-#else
 #define A_STC 0x2f00ac
 #define A_PMD 0x17f75f0
 #define A_PM 0x17f7ce8
@@ -31,7 +18,6 @@
 #define A_UNMAP 0x27d7d40
 #define A_MAP_NOTIFY 0x27d74d4
 #define A_MAP_REDIRECTION 0x38330b4
-#endif
 #define W0_STC 0xe3710008
 #define W1_STC 0xe92d4830
 #define W2_STC 0xe1a04000

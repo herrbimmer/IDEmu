@@ -1,0 +1,112 @@
+{
+  "profile": "nbtevo-006_016_002",
+  "status": "working",
+  "note": "Exact Build 66 registry profile for the common default shim. The id5_1803 object layout enables power/home, controller and map hooks; touch, TPM, Lua and debug hooks stay disabled. Nine instruction signatures and ten companion exports are checked before any HMI patch.",
+  "swfl": {
+    "os": "swfl_0000271a.bin.006_016_002",
+    "hmi": "swfl_00002720.bin.006_016_002",
+    "brand": "swfl_00002719.bin.006_016_002"
+  },
+  "hmi_sha256": "084d0d3236d69bcfbacb2cb73827e2e88c7559e1eca5c1c03ab952805f2b0748",
+  "library_sha256": {
+    "libhmicom.so": "5539c1b0c3f0c2a62d39e159be7ca7f8ea65f38c66472b786d0a937e45bdf7c7",
+    "libhmicoding.so": "836aa54d86d90b03d213603477e1c4c5fe9142c2c5c1450b76c4381e026e273c"
+  },
+  "hmi_build": "ID5_1803-510-1749I Build 66",
+  "runtime_validation": "Common default shim cold-booted exact Build 66 in 19.5 seconds on 2026-11-22 (SMP=2, no NIC/snapshots/host bridges). Six N57 pages and synthetic data, 30 CarPlay patch words and settings, NBT-AAD menu preferences and process control checked. Native map/touch/snapshot and phone/video/audio/physical HUD/vehicle compatibility remain unverified; see docs/PROFILE_006016.md.",
+  "libc_sha256": "7d1199d75bd1187dc3e1842fa89320e9eb82d7215ccf4ce251edcf033cf46baf",
+  "hmi_addr": {
+    "setup_screen_registered": {
+      "addr": "0x2f0064"
+    },
+    "pmd_fullon": {
+      "addr": "0x17f7080"
+    },
+    "pm_fullon": {
+      "addr": "0x17f7778"
+    },
+    "set_power_mode": {
+      "addr": "0x213b0c"
+    },
+    "make_ctrl_event_B": {
+      "addr": "0x24795c"
+    },
+    "ccs_push_button": {
+      "addr": "0x2d6b64"
+    },
+    "map_surface_map": {
+      "addr": "0x27d81f4"
+    },
+    "map_surface_unmap": {
+      "addr": "0x27d77d0"
+    },
+    "map_notify_update": {
+      "addr": "0x27d6f64"
+    },
+    "map_redirection_obj": {
+      "addr": "0x383275c"
+    }
+  },
+  "runtime": {
+    "abi": "id5_1803",
+    "home_power_flag": "0x577",
+    "home_aux_flag": "0x576",
+    "main_home_offset": "0x958",
+    "signatures": {
+      "setup_screen_registered": [
+        "0xe3710008",
+        "0xe92d4830",
+        "0xe1a04000",
+        "0xe28db00c"
+      ],
+      "pmd_fullon": [
+        "0xe92d4800",
+        "0xe28db004",
+        "0xe590003c",
+        "0xe8bd8800"
+      ],
+      "pm_fullon": [
+        "0xe92d4830",
+        "0xe3a01003",
+        "0xe28db00c",
+        "0xe1a04000"
+      ],
+      "set_power_mode": [
+        "0xe92d4830",
+        "0xe1a05000",
+        "0xe28db00c",
+        "0xe24dd008"
+      ],
+      "make_ctrl_event_B": [
+        "0xe59f3058",
+        "0xe3a00040",
+        "0xe92d4830",
+        "0xe28db00c"
+      ],
+      "ccs_push_button": [
+        "0xe92d4df0",
+        "0xe1a0a003",
+        "0xe59f30bc",
+        "0xe28db01c"
+      ],
+      "map_surface_map": [
+        "0xe92d4ff0",
+        "0xe59f45f8",
+        "0xe28db020",
+        "0xe59f35f4"
+      ],
+      "map_surface_unmap": [
+        "0xe92d49f0",
+        "0xe59f426c",
+        "0xe28db018",
+        "0xe59f3268"
+      ],
+      "map_notify_update": [
+        "0xe92d4830",
+        "0xe1a04000",
+        "0xe5900040",
+        "0xe28db00c"
+      ]
+    }
+  }
+}

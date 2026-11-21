@@ -8,11 +8,6 @@
       "libhmicom.so": "6ca9f5c1bb4b975d032947510da1b1ab4fffc3baeb3ca13e4d7d808ab29de2e4",
       "libhmicoding.so": "2bce4ed3f22b87f9eeea9b104d9674d5e13da9ac031a81203215a6254973036b"
     },
-    "006016": {
-      "hmi": "084d0d3236d69bcfbacb2cb73827e2e88c7559e1eca5c1c03ab952805f2b0748",
-      "libhmicom.so": "5539c1b0c3f0c2a62d39e159be7ca7f8ea65f38c66472b786d0a937e45bdf7c7",
-      "libhmicoding.so": "836aa54d86d90b03d213603477e1c4c5fe9142c2c5c1450b76c4381e026e273c"
-    },
     "1803": {
       "hmi": "2c906b5c6799a37a17b0ed51c37f67e0c1a2bc0edfb87596008f075062e9e6bf",
       "libhmicom.so": "23bdd4e323270854facced291ecd36b36dd9f13392c42736b4494df1bb9e6a70",

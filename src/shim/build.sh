@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build guest translation libraries (ARMv7, freestanding) with clang + ld.lld.
-# Usage: SHIM_PROFILE=default|1803|006016 ./build.sh <matching-firmware libc.so.3> [python-with-ziglang]
+# Usage: SHIM_PROFILE=default|1803 ./build.sh <matching-firmware libc.so.3> [python-with-ziglang]
 # Optional: IDEMU_SHIM_OUT=<output-directory> CC=clang LLD=ld.lld EXTRA_CF=<extra-flags>
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -23,10 +23,10 @@ case "$PROFILE" in
     PROFILE_CF=(-DHMI_PROFILE_1803=1)
     PROFILE_OUT=../../idemu/shim/lib-1803
     ;;
-  006016)
-    PROFILE_CF=(-DHMI_PROFILE_006016=1)
-    PROFILE_OUT=../../idemu/shim/lib-006016
-    PROFILE_LIBC=7d1199d75bd1187dc3e1842fa89320e9eb82d7215ccf4ce251edcf033cf46baf
+  006016) # Compatibility spelling: Build 66 now uses the common registry shim.
+    PROFILE_CF=()
+    PROFILE_OUT=$DEFAULT_OUT
+    PROFILE_LIBC=$("$PY" -c 'import json; print(json.load(open("../../idemu/data/firmwares/nbtevo-006_016_002.json"))["libc_sha256"])')
     ;;
   *)
     echo "Unsupported shim profile: $PROFILE" >&2
@@ -55,7 +55,7 @@ rm -f lib/libc.so.3
 cp "$LIBC" lib/libc.so.3
 CC=${CC:-clang}
 CF=(-target armv7-none-eabi -march=armv7-a -mfloat-abi=soft -ffreestanding -fPIC -Os -mno-unaligned-access -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header -Wno-int-conversion -Wno-pointer-sign)
-if [[ "$PROFILE" != default ]]; then CF+=("${PROFILE_CF[@]}"); fi
+if [[ "$PROFILE" == 1803 ]]; then CF+=("${PROFILE_CF[@]}"); fi
 if [[ -n ${EXTRA_CF:-} ]]; then
   read -r -a EXTRA <<< "$EXTRA_CF"
   CF+=("${EXTRA[@]}")

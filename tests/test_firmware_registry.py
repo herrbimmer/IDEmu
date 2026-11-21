@@ -11,10 +11,29 @@ from idemu import builder
 
 REGISTRY = Path(builder.HERE) / "data" / "firmwares"
 VERSIONS = ("007_001_016", "007_030_001", "007_039_008", "007_051_002")
+EARLY_VERSION = "006_016_002"
+EARLY_HOOKS = (
+    "setup_screen_registered", "pmd_fullon", "pm_fullon", "set_power_mode",
+    "make_ctrl_event_B", "ccs_push_button", "map_surface_map", "map_surface_unmap",
+    "map_notify_update",
+)
+EARLY_ADDRESSES = set(EARLY_HOOKS) | {"map_redirection_obj"}
 
 
 def firmware(version):
     return json.loads((REGISTRY / ("nbtevo-" + version + ".json")).read_text())
+
+
+def expected_records(profile):
+    records = {key: int(entry["addr"], 16) for key, entry in profile["hmi_addr"].items()}
+    if "runtime" in profile:
+        runtime = profile["runtime"]
+        records = {key: records.get(key, 0) for key in builder.HMI_ADDR_NAMES}
+        records.update(profile_abi=1, **{key: int(runtime[key], 16) for key in
+                       ("home_power_flag", "home_aux_flag", "main_home_offset")})
+        for key, words in runtime["signatures"].items():
+            records.update({"sig_%s_%d" % (key, i): int(word, 16) for i, word in enumerate(words)})
+    return records
 
 
 class FirmwareRegistryTest(unittest.TestCase):
@@ -34,7 +53,7 @@ class FirmwareRegistryTest(unittest.TestCase):
                     self.assertEqual(value % 4, 0)
 
     def test_every_registered_hmi_needs_both_exact_companion_libraries(self):
-        for version in VERSIONS:
+        for version in VERSIONS + (EARLY_VERSION,):
             profile = firmware(version)
             hmi, libraries = profile["hmi_sha256"], profile["library_sha256"]
             with self.subTest(version=version):
@@ -47,6 +66,26 @@ class FirmwareRegistryTest(unittest.TestCase):
                     self.assertFalse(builder.validate_shim_profile({}, hmi, missing), name)
                     self.assertFalse(builder.validate_shim_profile({}, hmi, wrong), name)
 
+    def test_006_profile_contains_only_its_ten_sites_and_complete_runtime_contract(self):
+        profile = firmware(EARLY_VERSION)
+        self.assertEqual(builder.profile_for_hmi(profile["hmi_sha256"]), profile)
+        self.assertFalse(profile.get("status", "").startswith("stub"))
+        self.assertEqual(set(profile["hmi_addr"]), EARLY_ADDRESSES)
+        self.assertEqual(set(profile["runtime"]), {"abi", "home_power_flag", "home_aux_flag",
+                                                  "main_home_offset", "signatures"})
+        self.assertEqual(profile["runtime"]["abi"], "id5_1803")
+        self.assertEqual(profile["runtime"]["home_power_flag"], "0x577")
+        self.assertEqual(profile["runtime"]["home_aux_flag"], "0x576")
+        self.assertEqual(profile["runtime"]["main_home_offset"], "0x958")
+        self.assertEqual(set(profile["runtime"]["signatures"]), set(EARLY_HOOKS))
+        for key, words in profile["runtime"]["signatures"].items():
+            with self.subTest(hook=key):
+                self.assertEqual(len(words), 4)
+                self.assertTrue(all(0 < int(word, 16) <= 0xffffffff for word in words))
+        records = expected_records(profile)
+        self.assertEqual(len(records), 69)
+        self.assertEqual({key for key in builder.HMI_ADDR_NAMES if records[key]}, EARLY_ADDRESSES)
+
     def test_1803_remains_separate_from_the_007_address_registry(self):
         hashes = dict(builder.SHIM_PROFILES["1803"])
         hmi = hashes.pop("hmi")
@@ -55,7 +94,7 @@ class FirmwareRegistryTest(unittest.TestCase):
         self.assertNotEqual(builder.shim_libdir({}), builder.shim_libdir({"shim_profile": "1803"}))
         with self.assertRaises(builder.BuildError):
             builder.validate_shim_profile({}, hmi, hashes)
-        for version in VERSIONS:
+        for version in VERSIONS + (EARLY_VERSION,):
             profile = firmware(version)
             with self.subTest(version=version), self.assertRaises(builder.BuildError):
                 builder.validate_shim_profile({"shim_profile": "1803"}, profile["hmi_sha256"],
@@ -124,9 +163,55 @@ class FirmwareRegistryTest(unittest.TestCase):
             with patch.object(builder, "HERE", tmp), self.assertRaises(builder.BuildError):
                 builder.profile_for_hmi(profile["hmi_sha256"])
 
-    def test_packaging_writes_only_the_selected_007_address_table(self):
+    def test_006_partial_or_unknown_runtime_metadata_is_rejected_before_image_writes(self):
+        profile = firmware(EARLY_VERSION)
+        malformed = []
+        for key in ("runtime",):
+            bad = copy.deepcopy(profile); del bad[key]; malformed.append(bad)
+        for value in (None, {}, {"abi": "id5_1803"}):
+            bad = copy.deepcopy(profile); bad["runtime"] = value; malformed.append(bad)
+        for key in profile["runtime"]:
+            bad = copy.deepcopy(profile); del bad["runtime"][key]; malformed.append(bad)
+        for key, value in (("abi", "unknown"), ("unknown", "0x1"),
+                           ("home_power_flag", "0x0"), ("home_power_flag", "0x10000"),
+                           ("home_aux_flag", "0x577"), ("home_aux_flag", 0x576),
+                           ("main_home_offset", "0x959"), ("main_home_offset", "0x10000"),
+                           ("main_home_offset", "not-hex")):
+            bad = copy.deepcopy(profile); bad["runtime"][key] = value; malformed.append(bad)
+        for name in EARLY_ADDRESSES:
+            bad = copy.deepcopy(profile); del bad["hmi_addr"][name]; malformed.append(bad)
+        bad = copy.deepcopy(profile)
+        bad["hmi_addr"]["eds_display_enable"] = {"addr": "0x1000"}
+        malformed.append(bad)
+        for value in (None, "not-a-sha256", "0" * 63):
+            bad = copy.deepcopy(profile); bad["libc_sha256"] = value; malformed.append(bad)
+        bad = copy.deepcopy(profile); del bad["libc_sha256"]; malformed.append(bad)
+        for name in EARLY_HOOKS:
+            bad = copy.deepcopy(profile); del bad["runtime"]["signatures"][name]; malformed.append(bad)
+        bad = copy.deepcopy(profile)
+        bad["runtime"]["signatures"]["map_redirection_obj"] = ["0x1"] * 4
+        malformed.append(bad)
+        for words in (["0x1"] * 3, ["0x1"] * 5, ["0x1", "0x0", "0x1", "0x1"],
+                      ["0x1", "not-hex", "0x1", "0x1"], ["0x1", "0x100000000", "0x1", "0x1"],
+                      [1, 2, 3, 4]):
+            bad = copy.deepcopy(profile); bad["runtime"]["signatures"][EARLY_HOOKS[0]] = words
+            malformed.append(bad)
+        for index, bad in enumerate(malformed):
+            with self.subTest(case=index), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp) / "data/firmwares"
+                directory.mkdir(parents=True)
+                (directory / "bad.json").write_text(json.dumps(bad))
+                with patch.object(builder, "HERE", tmp), patch.object(builder.mkdisk, "Tree") as tree:
+                    with self.assertRaises(builder.BuildError):
+                        builder.build_shim({}, "/unused", "/unused/shim.img",
+                                           hmi_sha=profile["hmi_sha256"], library_hashes=profile["library_sha256"])
+                    tree.assert_not_called()
+
+    def test_packaging_writes_the_selected_legacy_or_extended_address_table(self):
         cases = [({}, firmware(version)["hmi_sha256"], firmware(version)["library_sha256"])
-                 for version in VERSIONS]
+                 for version in VERSIONS + (EARLY_VERSION,)]
+        early = firmware(EARLY_VERSION)
+        cases.append(({"shim_profile": "006016"}, early["hmi_sha256"], early["library_sha256"]))
         hashes = dict(builder.SHIM_PROFILES["1803"])
         cases.append(({"shim_profile": "1803"}, hashes.pop("hmi"), hashes))
         with tempfile.TemporaryDirectory() as tmp:
@@ -150,18 +235,31 @@ class FirmwareRegistryTest(unittest.TestCase):
                     if env.get("shim_profile") == "1803":
                         self.assertIsNone(table)
                     else:
-                        expected = {key: entry["addr"] for key, entry in builder.profile_for_hmi(hmi)["hmi_addr"].items()}
-                        self.assertEqual(dict(line.split() for line in table.src.decode().splitlines()), expected)
+                        lines = table.src.decode().splitlines()
+                        actual = {key: int(value, 16) for key, value in (line.split() for line in lines)}
+                        self.assertEqual(len(lines), len(actual), "duplicate addr.tab records")
+                        expected = expected_records(builder.profile_for_hmi(hmi))
+                        self.assertEqual(actual, expected)
+                        self.assertEqual(len(actual), 69 if hmi == early["hmi_sha256"] else 29)
 
     def test_unverified_registry_cannot_write_a_shim(self):
-        profile = firmware("007_001_016")
         with patch.object(builder.mkdisk, "Tree") as tree:
-            for libraries in ({}, dict(profile["library_sha256"], **{"libhmicom.so": "0" * 64})):
-                with self.subTest(libraries=libraries), self.assertRaisesRegex(builder.BuildError, "exact HMI"):
-                    builder.build_shim({}, "/unused", "/unused/shim.img", hmi_sha=profile["hmi_sha256"],
-                                       library_hashes=libraries)
+            for version in ("007_001_016", EARLY_VERSION):
+                profile = firmware(version)
+                for libraries in ({}, dict(profile["library_sha256"], **{"libhmicom.so": "0" * 64})):
+                    with self.subTest(version=version, libraries=libraries), self.assertRaises(builder.BuildError):
+                        builder.build_shim({}, "/unused", "/unused/shim.img", hmi_sha=profile["hmi_sha256"],
+                                           library_hashes=libraries)
             with self.assertRaisesRegex(builder.BuildError, "rebuild"):
                 builder.build_shim({}, "/unused", "/unused/shim.img")
+            with self.assertRaisesRegex(builder.BuildError, "exact HMI"):
+                builder.build_shim({}, "/unused", "/unused/shim.img", hmi_sha="0" * 64,
+                                   library_hashes=firmware(EARLY_VERSION)["library_sha256"])
+            # Losing the JSON entry must not downgrade exact006 to unverified 051 defaults.
+            early = firmware(EARLY_VERSION)
+            with patch.object(builder, "profile_for_hmi", return_value=None), self.assertRaises(builder.BuildError):
+                builder.build_shim({}, "/unused", "/unused/shim.img", hmi_sha=early["hmi_sha256"],
+                                   library_hashes=early["library_sha256"])
             tree.assert_not_called()
 
     def test_unfinished_local_profile_is_not_applied(self):
