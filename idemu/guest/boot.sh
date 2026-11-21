@@ -14,9 +14,10 @@ ln -sP /fs/shim/lib/libBMWOTFapi.so.3 /opt/hmi/otf/libBMWOTFapi.so.3
 ln -sP /fs/shim/lib/ioipc-idemu.so /lib/ioipc-idemu.so
 # plugins de teste (idemu/plugins/): copiados para a RAM no começo do boot; o disco de shim é sobrescrito em execução
 if [ -d /fs/shim/plug ]; then
-  mkdir -p /dev/shmem/plug
-  for d in /fs/shim/plug/*; do n=${d##*/}; mkdir -p /dev/shmem/plug/$n; cp $d/* /dev/shmem/plug/$n/; done
-  ln -sP /dev/shmem/plug /opt/hmi/ID5/data/ro/Plugins
+  # QNX shared memory supports files but not mkdir; use the writable RAM disk.
+  mkdir -p /var/idemu-plugins
+  for d in /fs/shim/plug/*; do n=${d##*/}; mkdir -p /var/idemu-plugins/$n; cp $d/* /var/idemu-plugins/$n/; done
+  ln -sP /var/idemu-plugins /opt/hmi/ID5/data/ro/Plugins
 fi
 export SYSNAME=nto TEMP=/dev/shmem HOME=/dev/shmem QNX_VERSION=qnx650 PROCESSOR=armle-v7 HOSTNAME=hu-omap BOOTMODE=TCFG MALLOC_MMAP_NOZERO=1
 . /fs/shim/env.sh

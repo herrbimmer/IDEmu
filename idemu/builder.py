@@ -65,7 +65,7 @@ SHIM_HMI_HASHES = {name: files['hmi'] for name, files in SHIM_PROFILES.items()}
 
 def shim_libdir(env):
     profile = env.get('shim_profile')
-    if not profile or profile == 'default':
+    if not profile or profile in ('default', '006016'):
         return os.path.join(HERE, 'shim', 'lib')
     if not re.fullmatch(r'[A-Za-z0-9_-]+', profile):
         raise BuildError('invalid shim profile name')
@@ -75,16 +75,25 @@ def shim_libdir(env):
 def validate_shim_profile(env, hmi_sha256, library_hashes=None):
     """Return whether the exact firmware/profile set is validated; reject known mismatches."""
     selected = env.get('shim_profile') or 'default'
+    legacy_006 = selected == '006016'
+    if legacy_006:
+        selected = 'default'
     expected = SHIM_PROFILES.get(selected)
     if not expected:
         raise BuildError('shim profile %s has no registered HmiMain3D hash' % selected)
     explicit = selected != 'default'
-    if hmi_sha256 != expected['hmi']:
-        if explicit:
-            raise BuildError('shim profile %s requires HmiMain3D %s, got %s' % (selected, expected['hmi'], hmi_sha256))
+    if not explicit:
         for profile, files in SHIM_PROFILES.items():
             if profile != 'default' and hmi_sha256 == files['hmi']:
                 raise BuildError('HmiMain3D requires shim profile %s' % profile)
+    firmware = profile_for_hmi(hmi_sha256) if not explicit else None
+    if legacy_006 and (not firmware or firmware['profile'] != 'nbtevo-006_016_002'):
+        raise BuildError('shim profile 006016 requires firmware 006_016_002 from the JSON registry')
+    if firmware and hmi_sha256 != expected['hmi']:
+        expected = {'hmi': hmi_sha256, **firmware['library_sha256']}
+    if hmi_sha256 != expected['hmi']:
+        if explicit:
+            raise BuildError('shim profile %s requires HmiMain3D %s, got %s' % (selected, expected['hmi'], hmi_sha256))
         return False
     libraries = library_hashes or {}
     for name, digest in expected.items():
@@ -92,8 +101,8 @@ def validate_shim_profile(env, hmi_sha256, library_hashes=None):
             continue
         actual = libraries.get(name)
         if actual != digest:
-            if explicit:
-                raise BuildError('shim profile %s requires %s %s, got %s' % (selected, name, digest, actual))
+            if explicit or legacy_006:
+                raise BuildError('shim profile %s requires %s %s, got %s' % (env.get('shim_profile'), name, digest, actual))
             return False
     return True
 
@@ -117,6 +126,101 @@ def _walk_files(root):
         for f in sorted(fn):
             p = os.path.join(dp, f)
             yield os.path.relpath(p, root), p
+
+HMI_ADDR_NAMES = (
+    'eds_display_enable', 'eds2_display_enable', 'touch_client_ctor1', 'touch_client_ctor2',
+    'map_surface_map', 'map_surface_unmap', 'lua_error', 'setup_screen_registered',
+    'pmd_fullon', 'pm_fullon', 'tpm_update_status', 'tpm_timer_cb',
+    'make_ctrl_event_A', 'make_ctrl_event_B', 'get_hmi_proc_unit', 'set_power_mode',
+    'map_redirection_obj', 'map_notify_update', 'touch_data_ctor', 'touch_forward',
+    'map_int_bool_find', 'gesture_vtbl_marker', 'dbg_obj_get', 'dbg_handler_get',
+    'home_app_handler', 'ccs_push_button', 'ctrl_listener_group_id', 'cb_vtable_const',
+    'tdc_tramp_vtable_const',
+)
+
+
+# The older object layout uses only these hooks; unused 007 addresses must stay zero.
+MINIMAL_HMI_ADDR_NAMES = (
+    'setup_screen_registered', 'pmd_fullon', 'pm_fullon', 'set_power_mode',
+    'make_ctrl_event_B', 'ccs_push_button', 'map_surface_map',
+    'map_surface_unmap', 'map_notify_update', 'map_redirection_obj',
+)
+MINIMAL_SIGNATURE_NAMES = MINIMAL_HMI_ADDR_NAMES[:-1]
+
+
+def firmware_address_table(profile):
+    """Serialize one complete registry selection, including its guarded object layout."""
+    entries = {key: profile['hmi_addr'].get(key, {}).get('addr', '0x0')
+               for key in HMI_ADDR_NAMES}
+    runtime = profile.get('runtime')
+    if runtime:
+        entries['profile_abi'] = '0x1'
+        for key in ('home_power_flag', 'home_aux_flag', 'main_home_offset'):
+            entries[key] = runtime[key]
+        for name, words in runtime['signatures'].items():
+            for index, word in enumerate(words):
+                entries['sig_%s_%d' % (name, index)] = word
+    return ''.join('%s %s\n' % item for item in sorted(entries.items())).encode()
+
+
+def profile_for_hmi(hmi_sha):
+    """Return a complete default-shim firmware profile, never a partial address override."""
+    directory = os.path.join(HERE, 'data', 'firmwares')
+    if not hmi_sha or not os.path.isdir(directory):
+        return None
+    found, seen = None, set()
+    for name in sorted(os.listdir(directory)):
+        if not name.endswith('.json'):
+            continue
+        try:
+            with open(os.path.join(directory, name)) as f:
+                profile = json.load(f)
+            if profile.get('status', '').startswith('stub'):
+                continue
+            digest = profile['hmi_sha256']
+            libraries = profile['library_sha256']
+            addresses = profile['hmi_addr']
+            if not re.fullmatch(r'[0-9a-f]{64}', digest) or digest in seen:
+                raise ValueError('invalid or duplicate HMI hash')
+            seen.add(digest)
+            if set(libraries) != {'libhmicom.so', 'libhmicoding.so'} or any(
+                    not re.fullmatch(r'[0-9a-f]{64}', value) for value in libraries.values()):
+                raise ValueError('exact companion-library hashes required')
+            runtime = profile.get('runtime')
+            required = MINIMAL_HMI_ADDR_NAMES if runtime is not None else HMI_ADDR_NAMES
+            if set(addresses) != set(required):
+                raise ValueError('complete HMI address set required')
+            if runtime is not None:
+                if set(runtime) != {'abi', 'home_power_flag', 'home_aux_flag',
+                                    'main_home_offset', 'signatures'} or runtime['abi'] != 'id5_1803':
+                    raise ValueError('unsupported runtime profile ABI')
+                for key in ('home_power_flag', 'home_aux_flag', 'main_home_offset'):
+                    value = runtime[key]
+                    if not re.fullmatch(r'0x[0-9a-fA-F]{1,4}', value) or not int(value, 16):
+                        raise ValueError('invalid runtime structure offset')
+                if (int(runtime['home_power_flag'], 16) == int(runtime['home_aux_flag'], 16) or
+                        int(runtime['main_home_offset'], 16) % 4):
+                    raise ValueError('invalid runtime structure layout')
+                signatures = runtime['signatures']
+                if set(signatures) != set(MINIMAL_SIGNATURE_NAMES):
+                    raise ValueError('complete hook signature set required')
+                for words in signatures.values():
+                    if not isinstance(words, list) or len(words) != 4 or any(
+                            not isinstance(word, str) or not re.fullmatch(r'0x[0-9a-fA-F]{1,8}', word)
+                            or not int(word, 16) for word in words):
+                        raise ValueError('four nonzero instruction words required per hook')
+                if not re.fullmatch(r'[0-9a-f]{64}', profile['libc_sha256']):
+                    raise ValueError('exact build libc hash required')
+            for entry in addresses.values():
+                value = entry['addr']
+                if not re.fullmatch(r'0x[0-9a-fA-F]{1,8}', value) or not int(value, 16) or int(value, 16) % 4:
+                    raise ValueError('invalid ARM address')
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
+            raise BuildError('invalid firmware profile %s: %s' % (name, e)) from e
+        if digest == hmi_sha:
+            found = profile
+    return found
+
 
 def build(env, env_dir, log=print, progress=lambda pct, step: None):
     _last = [None]
@@ -240,7 +344,7 @@ def build(env, env_dir, log=print, progress=lambda pct, step: None):
         library_hashes[name] = sha256_file(path) if path else None
     manifest['shim_library_sha256'] = library_hashes
     manifest['hmi_validated'] = validate_shim_profile(env, manifest['hmi_sha256'], library_hashes)
-    build_shim(env, istep['os'], os.path.join(img_dir, 'shim.img'), log)
+    build_shim(env, istep['os'], os.path.join(img_dir, 'shim.img'), log, manifest['hmi_sha256'], library_hashes)
     # 6) assinatura do HMI + manifesto
     if not manifest['hmi_validated']:
         log('AVISO: este HmiMain3D não é uma das versões validadas; os patches em memória do shim podem falhar.')
@@ -251,7 +355,19 @@ def build(env, env_dir, log=print, progress=lambda pct, step: None):
     progress(100, 'Pronto')
     return manifest
 
-def build_shim(env, os_istep, out, log=print):
+def shim_firmware(env, hmi_sha, library_hashes):
+    """Validate a shim rebuild before changing an environment or packaging addresses."""
+    if not hmi_sha:
+        raise BuildError('missing HMI hash; rebuild the environment before refreshing its shim')
+    validated = validate_shim_profile(env, hmi_sha, library_hashes)
+    prof = profile_for_hmi(hmi_sha) if (env.get('shim_profile') or 'default') in ('default', '006016') else None
+    if not validated:
+        raise BuildError('firmware registry requires the exact HMI and companion-library hashes; rebuild the environment')
+    return prof
+
+
+def build_shim(env, os_istep, out, log=print, hmi_sha=None, library_hashes=None):
+    prof = shim_firmware(env, hmi_sha, library_hashes)
     t = mkdisk.Tree()
     t.mkdir('/lib', 0o40775)
     libdir = shim_libdir(env)
@@ -267,6 +383,11 @@ def build_shim(env, os_istep, out, log=print):
     # variantes internas forçadas (id -> 0/1): o shim lê /fs/shim/variants.bin (u32 LE: id | valor << 31)
     vt = b''.join(struct.pack('<I', (int(k, 0) & 0xffff) | (int(bool(v)) << 31)) for k, v in sorted((env.get('variants') or {}).items()))
     if vt: t.add('/variants.bin', 0o100644, vt, len(vt))
+    # IDEmu multi-firmware: endereços específicos do build (registry em data/firmwares/). Shim lê /fs/shim/addr.tab ("nome 0xHEX").
+    if prof:
+        at = firmware_address_table(prof)
+        t.add('/addr.tab', 0o100644, at, len(at))
+        log('addr.tab: %d endereços (perfil %s)' % (len(prof['hmi_addr']), hmi_sha[:12]))
     # serviços: números do starter.cfg do próprio SWFL
     cfg = open(os.path.join(os_istep, 'opt/sys/etc/starter.cfg'), errors='replace').read()
     procs = []
