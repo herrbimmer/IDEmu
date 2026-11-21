@@ -22,6 +22,11 @@ exige recompilar o shim. O perfil upstream **18-03 (`1803`, `006_017_006`) conti
 com seus próprios DSOs, offsets, feature gates e assinaturas; ele não lê `addr.tab`.
 Veja [NBT_PROFILES.md](../../../docs/NBT_PROFILES.md).
 
+`006_016_002` usa outro perfil explícito, **`shim_profile: "006016"`**, com DSOs
+em `lib-006016`, hashes próprios e nove assinaturas. Ele também ignora
+`addr.tab`; não é uma entrada de 29 endereços deste registry. Veja
+[a validação exata e os limites](../../../docs/PROFILE_006016.md).
+
 ## Campos do perfil
 
 - `hmi_sha256` — chave de busca (sha256 de opt/hmi/ID5/bin/HmiMain3D).

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Build guest translation libraries (ARMv7, freestanding) with clang + ld.lld.
-# Usage: SHIM_PROFILE=default|1803 ./build.sh <matching-firmware libc.so.3> [python-with-ziglang]
+# Usage: SHIM_PROFILE=default|1803|006016 ./build.sh <matching-firmware libc.so.3> [python-with-ziglang]
 # Optional: IDEMU_SHIM_OUT=<output-directory> CC=clang LLD=ld.lld EXTRA_CF=<extra-flags>
 set -euo pipefail
 cd "$(dirname "$0")"
 if [[ $# -lt 1 ]]; then
-  echo "Usage: SHIM_PROFILE=default|1803 $0 <matching-firmware libc.so.3> [python-with-ziglang]" >&2
+  echo "Usage: SHIM_PROFILE=default|1803|006016 $0 <matching-firmware libc.so.3> [python-with-ziglang]" >&2
   exit 2
 fi
 LIBC=$1
@@ -13,6 +13,7 @@ PY=${2:-python3}
 [[ -f $LIBC ]] || { echo "Firmware libc not found: $LIBC" >&2; exit 1; }
 DEFAULT_OUT=../../idemu/shim/lib
 PROFILE=${SHIM_PROFILE:-default}
+PROFILE_LIBC=
 case "$PROFILE" in
   default)
     PROFILE_CF=()
@@ -22,15 +23,27 @@ case "$PROFILE" in
     PROFILE_CF=(-DHMI_PROFILE_1803=1)
     PROFILE_OUT=../../idemu/shim/lib-1803
     ;;
+  006016)
+    PROFILE_CF=(-DHMI_PROFILE_006016=1)
+    PROFILE_OUT=../../idemu/shim/lib-006016
+    PROFILE_LIBC=7d1199d75bd1187dc3e1842fa89320e9eb82d7215ccf4ce251edcf033cf46baf
+    ;;
   *)
     echo "Unsupported shim profile: $PROFILE" >&2
     exit 2
     ;;
 esac
 # The profile selector, not an unrelated compiler flag, determines the guest ABI/address profile.
-if [[ ${EXTRA_CF:-} == *HMI_PROFILE_1803* ]]; then
-  echo "Use SHIM_PROFILE=1803 instead of putting HMI_PROFILE_1803 in EXTRA_CF" >&2
+if [[ ${EXTRA_CF:-} == *HMI_PROFILE_* ]]; then
+  echo "Use SHIM_PROFILE instead of putting HMI_PROFILE_* in EXTRA_CF" >&2
   exit 2
+fi
+if [[ -n "$PROFILE_LIBC" ]]; then
+  ACTUAL_LIBC=$("$PY" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$LIBC")
+  [[ "$ACTUAL_LIBC" == "$PROFILE_LIBC" ]] || {
+    echo "Shim profile $PROFILE requires firmware libc SHA256 $PROFILE_LIBC, got $ACTUAL_LIBC" >&2
+    exit 1
+  }
 fi
 OUT=${IDEMU_SHIM_OUT:-$PROFILE_OUT}
 IOIPC=$DEFAULT_OUT/ioipc-idemu.so
@@ -42,7 +55,7 @@ rm -f lib/libc.so.3
 cp "$LIBC" lib/libc.so.3
 CC=${CC:-clang}
 CF=(-target armv7-none-eabi -march=armv7-a -mfloat-abi=soft -ffreestanding -fPIC -Os -mno-unaligned-access -Wno-incompatible-library-redeclaration -Wno-builtin-requires-header -Wno-int-conversion -Wno-pointer-sign)
-if [[ "$PROFILE" == 1803 ]]; then CF+=("${PROFILE_CF[@]}"); fi
+if [[ "$PROFILE" != default ]]; then CF+=("${PROFILE_CF[@]}"); fi
 if [[ -n ${EXTRA_CF:-} ]]; then
   read -r -a EXTRA <<< "$EXTRA_CF"
   CF+=("${EXTRA[@]}")

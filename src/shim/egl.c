@@ -9,6 +9,14 @@ static void L(const char*s,u32 a,u32 b,u32 c){ br_logx(s,a,b,c); }
 int screen_create_context(void**c,int f){ *c=newobj(K_CTX); L("screen_create_context",f,0,0); return 0; }
 int screen_destroy_context(void*c){ L("screen_destroy_context",0,0,0); return 0; }
 int screen_create_window(void**w,void*ctx){ obj_t*o=newobj(K_WIN); o->w=1920; o->h=720; *w=o; L("screen_create_window",(u32)o,0,0); return 0; }
+int screen_create_window_type(void**w,void*ctx,int type){
+  extern int *__get_errno_ptr(void);
+  /* shortcut: native Screen buffer posting is unsupported; implement it before accepting typed windows. */
+  if(w) *w=NULL;
+  L("screen_create_window_type: unsupported",type,0,0);
+  *__get_errno_ptr()=89; /* QNX ENOSYS (not the host's errno value). */
+  return -1;
+}
 int screen_destroy_window(void*w){ L("screen_destroy_window",(u32)w,0,0); return 0; }
 int screen_create_window_buffers(void*w,int n){ L("screen_create_window_buffers",(u32)w,n,0); return 0; }
 static int setiv(obj_t*o,u32 pn,const s32*v,u32 n,const char*nm){ u32 i; if(o->kind==K_WIN&&pn==5&&v){ o->w=v[0]; o->h=v[1]; } if(pn<NPROP){ for(i=0;i<n&&i<4;i++) o->iv[pn][i]=v[i]; o->set[pn]=n; }

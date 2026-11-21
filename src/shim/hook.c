@@ -35,13 +35,16 @@ void *hk_tramp(u32 a,void *fn){ if(!a||!fn){ br_logx("hook: invalid trampoline t
   if(hk_patch((void*)a,fn)){ munmap(t,4096); return 0; } return t; }
 
 typedef struct { u32 addr,w0,w1,w2,w3; const char *name; } profile_sig;
-static int sig_ok(const profile_sig *s){
-  if(!s->addr){ br_logx(s->name,0xdead1e,0,0); return 0; }
-#if PROFILE_CHECK
-  u32 *p=(u32*)s->addr;
+static int sig_words_ok(const profile_sig *s,const u32 *p){
   if(p[0]!=s->w0||p[1]!=s->w1||p[2]!=s->w2||p[3]!=s->w3){
     br_logx(s->name,0xdead1e,p[0],p[1]); br_logx("expected",s->w0,s->w1,s->w2); return 0;
   }
+  return 1;
+}
+static int sig_ok(const profile_sig *s){
+  if(!s->addr){ br_logx(s->name,0xdead1e,0,0); return 0; }
+#if PROFILE_CHECK
+  return sig_words_ok(s,(const u32*)s->addr);
 #endif
   return 1;
 }
@@ -66,7 +69,7 @@ static int hk_readCodingBlock(u8 *self,u8 *buf,u32 sz){ cod_load(); static const
   for(i=0;i<NCOD;i++) if(cod[i].blk==blk&&cod[i].byte<sz) buf[cod[i].byte]=(buf[cod[i].byte]&~cod[i].mask)|cod[i].val;
   br_logx("coding: block",blk,sz,n); return 1; }
 static int hk_true(void){ return 1; }
-#ifndef HMI_PROFILE_1803
+#ifndef HMI_PROFILE_FIXED
 /* ---- IDEmu multi-firmware: build-specific HMI addresses (registry) ----
    Defaults below = NBTEvo 007_051_002 (os autores' validated build). Para outra firmware o builder do host
    (idemu/builder.py) escreve /fs/shim/addr.tab ("nome 0xHEX" por linha) a partir do perfil correspondente
@@ -122,7 +125,7 @@ invalid:
   br_log("addr.tab: invalid or incomplete table; refusing HMI hooks"); return -1; }
 #define HMI_ADDR(member,fallback) (AD.member)
 #else
-/* The separately built 18-03 shim keeps its signature-checked address set. */
+/* Separately built fixed profiles keep their signature-checked address sets. */
 #define HMI_ADDR(member,fallback) (fallback)
 #define addr_load() (0)
 #endif
@@ -154,7 +157,13 @@ static void (*map_notify)(void*,u32);
    giros chegavam). app_pu é o proc unit do thread que registra a tela inicial (hk_stc), o mesmo que despacha os eventos do controlador: push_ctrl usa ele. */
 static u8 *app_pu;
 /* Ligar o HMI ("auto power on"): no thread principal (updateAliveTime). */
-static void auto_power_on(void){ static int t,done,failed; if(done||!hook_home()||++t<=AUTO_POWER_TICKS) return; done=1;
+static void auto_power_on(void){ static int t,done,failed;
+#ifdef HMI_PROFILE_006016
+  /* TLS returns the caller's proc unit, including non-application units.
+     setPowerMode needs the captured application object on its own thread. */
+  if(!get_proc||!app_pu||get_proc()!=app_pu) return;
+#endif
+  if(done||!hook_home()||++t<=AUTO_POWER_TICKS) return; done=1;
   if(!get_proc||!power_set){ if(!failed++){ br_log("power: unresolved get_proc/power_set"); } return; }
   u8*pu=get_proc(); if(!pu){ if(!failed++){ br_log("power: no main proc unit"); } return; }
   br_log("auto power on"); power_set(pu,3); ((u8*)hook_home())[HOME_POWER_FLAG]=1; ((u8*)hook_home())[HOME_AUX_FLAG]=0; }
@@ -296,6 +305,30 @@ void install_hooks(void){ static int done; if(__atomic_exchange_n(&done,1,__ATOM
   const profile_sig maps={HMI_ADDR(map_surface_map,A_MAPSURF),W0_MAPSURF,W1_MAPSURF,W2_MAPSURF,W3_MAPSURF,"mapsurf"};
   const profile_sig unmap={HMI_ADDR(map_surface_unmap,A_UNMAP),W0_UNMAP,W1_UNMAP,W2_UNMAP,W3_UNMAP,"unmap"};
   const profile_sig mn={HMI_ADDR(map_notify_update,A_MAP_NOTIFY),W0_MAP_NOTIFY,W1_MAP_NOTIFY,W2_MAP_NOTIFY,W3_MAP_NOTIFY,"map_notify"};
+
+#ifdef HMI_PROFILE_006016
+  /* Refuse the whole profile before any code patch when one required site or
+     companion export is missing. The host also checks all three exact hashes. */
+  const profile_sig *required[]={&stc,&pmd,&pm,&pwr,&cev,&cbtn,&maps,&unmap,&mn};
+  for(u32 i=0;i<sizeof required/sizeof required[0];i++) if(!sig_ok(required[i])){
+    br_log("006016: signature mismatch; refusing all HMI hooks"); return;
+  }
+  const char *symbols[][2]={
+    {"libhmicom.so","_Z14getHmiProcUnitv"},
+    {"libhmicom.so","_ZN12CHmiProcUnit9pushEventEP9CHmiEvent"},
+    {"libhmicom.so","_ZN12CHmiProcUnit15updateAliveTimeEv"},
+    {"libhmicom.so","_ZN12CHmiProcUnitC2ER18CHmiMainDispatcherh"},
+    {"libhmicoding.so","sysetDefaults_getBuffer"},
+    {"libhmicoding.so","_ZN16CDsiBinaryStreamC1Et"},
+    {"libhmicoding.so","_ZN16CDsiBinaryStream15readCodingBlockEPvj"},
+    {"libhmicoding.so","_ZN17CHmiCodingService16openBinaryStreamEPK14CODING_FEATURE"},
+    {"libhmicoding.so","_ZN17CHmiVariantServer15isVACodingValidEv"},
+    {"libhmicoding.so","_ZN17CHmiVariantServer12isVariantSetEj"}
+  };
+  for(u32 i=0;i<sizeof symbols/sizeof symbols[0];i++) if(!hk_sym(symbols[i][0],symbols[i][1])){
+    br_log("006016: missing companion export; refusing all HMI hooks"); return;
+  }
+#endif
 
   get_proc=(u8*(*)(void))hk_sym("libhmicom.so","_Z14getHmiProcUnitv");
   proc_push=(void(*)(void*,void*))hk_sym("libhmicom.so","_ZN12CHmiProcUnit9pushEventEP9CHmiEvent");

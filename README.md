@@ -39,6 +39,11 @@ python3 -m idemu gui   # the same, web interface at http://127.0.0.1:8765
 New environment → iDrive version → car model → required files → parameters → create → build (~20 s for iDrive 5/6) → start. Command line:
 `python3 -m idemu list | build <id> | run <id>`.
 
+For exact `006_016_002` / Build 66, select the separate `"shim_profile": "006016"`
+and build its guest libraries with the matching IFS libc. See
+[the profile and emulator validation](docs/PROFILE_006016.md) for hashes,
+cold-boot/N57/CarPlay results and limits; this build does not use the `1803` shim.
+
 ## Highlights
 
 * **Real software**: the original HMI binaries run unmodified; hardware that is missing in the VM is replaced by small shims (graphics, window system,
@@ -52,6 +57,14 @@ New environment → iDrive version → car model → required files → paramete
 * **Coding editor**: parameters with their factory values from the firmware, backups, import/export, flash and verified restart.
 * **Fast boot**: the booted state is saved and restored in about a second (iDrive 5, 6 and 7).
 * **Tools**: SSH into the head unit, phone link over Wi-Fi, V850 firmware viewer, live statistics (CPU, RAM, GPU, FPS).
+
+## Testing native iDrive 5/6 plugins
+
+Place each complete plugin folder under `idemu/plugins/<Name>/` and rebuild the environment's shim. The guest stages these files on its writable RAM disk and exposes them under the HMI's `Plugins` directory. QNX does not support creating directories under `/dev/shmem`.
+
+On iDrive 6, discovering a plugin manifest does not mean the HMI will start the application. Enable the virtual car's apps coding explicitly, for example `"extra": {"A4A": 1}` inside `env.json`'s `coding`, then rebuild the shim while the environment is stopped. This was checked on `007_030_001`: without A4A the HMI enumerated the plugin directories but never loaded the libraries; with A4A the N57 ID6 Apps menus loaded. This setting changes only the emulator's coding table.
+
+Worker paths and settings may still use the real unit's `/var/opt/hmi/data/ID5/` layout. Match those paths inside the test guest before checking worker startup. Successful `dlopen` alone does not verify application initialization, menu input, diagnostic data or vehicle commands.
 
 ## Repository map
 
