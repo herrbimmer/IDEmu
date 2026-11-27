@@ -1,5 +1,7 @@
 #include "common.h"
 #define CHUNK (1024*1024)
+#define GL_HALF_FLOAT 0x140B
+#define GL_HALF_FLOAT_OES 0x8D61
 static u32 cnt[5];            /* 0 tex,1 buf,2 fbo,3 rbo,4 obj */
 static u32 unpack_align=4, pack_align=4;
 static u32 cur_array_buf, cur_elem_buf, cur_fbo, cur_rbo, cur_prog, active_tex, cur_tex[32];
@@ -14,11 +16,17 @@ static eb_t *eb_find(u32 id,int create){
   return 0;
 }
 static u32 tsize(u32 type){ switch(type){case 0x1400:case 0x1401:return 1;case 0x1402:case 0x1403:return 2;case 0x1404:case 0x1405:case 0x1406:return 4;default:return 4;} }
+static u32 pixel_components(u32 fmt){
+  switch(fmt){
+    case 0x1902: case 0x1906: case 0x1909: return 1;
+    case 0x190A: return 2;
+    case 0x1907: return 3;
+    default: return 4;
+  }
+}
 static u32 pixbpp(u32 fmt,u32 type){
-  u32 ch=4;
   switch(type){ case 0x8363:case 0x8033:case 0x8034:return 2; case 0x1403:case 0x1402: if(fmt==0x1902||fmt==0x84F9) return 2; break; case 0x1405: case 0x84FA: return 4; }
-  switch(fmt){ case 0x1906:case 0x1909:case 0x1902:ch=1;break; case 0x190A:ch=2;break; case 0x1907:ch=3;break; default:ch=4; }
-  return ch*tsize(type);
+  return pixel_components(fmt)*tsize(type);
 }
 static void wcopy(u32*dst,const void*src,u32 n){ memcpy(dst,src,n); if(n&3) memset((u8*)dst+n,0,4-(n&3)); }
 /* ---- generic ---- */
@@ -73,22 +81,53 @@ void glBufferData(u32 target,s32 size,const void*data,u32 usage){
     LOCK(); p=br_begin(OP_BUFFERSUBDATA,3+(n+3)/4); p[0]=target;p[1]=done;p[2]=n; wcopy(p+3,(const u8*)data+done,n); UNLOCK(); done+=n; } }
 }
 /* ---- textures ---- */
+static u32 texture_type(u32 type){
+  return type==GL_HALF_FLOAT_OES ? GL_HALF_FLOAT : type;
+}
+static u32 texture_bpp(u32 fmt,u32 type){
+  if(type!=GL_HALF_FLOAT) return pixbpp(fmt,type);
+  switch(fmt){
+    case 0x1903: return 2; /* GL_RED */
+    case 0x8227: return 4; /* GL_RG */
+    default: return 2*pixel_components(fmt);
+  }
+}
+static u32 unpack_stride(u32 row_bytes){
+  return (row_bytes+unpack_align-1)/unpack_align*unpack_align;
+}
 void glTexSubImage2D(u32 target,s32 level,s32 x,s32 y,s32 w,s32 h,u32 fmt,u32 type,const void*pix){
-  u32 bpp=pixbpp(fmt,type); u32 row=(w*bpp+unpack_align-1)/unpack_align*unpack_align;
-  s32 rows_per=(CHUNK*2)/(row?row:1); s32 done=0; if(rows_per<1) rows_per=1;
   if(!pix||w<=0||h<=0) return;
-  while(done<h){ s32 r=h-done; u32*p; if(r>rows_per) r=rows_per;
-    LOCK(); p=br_begin(OP_TEXSUBIMAGE,9+(row*r+3)/4);
-    p[0]=target;p[1]=level;p[2]=x;p[3]=y+done;p[4]=w;p[5]=r;p[6]=fmt;p[7]=type;p[8]=row*r;
-    wcopy(p+9,(const u8*)pix+(u32)row*done,row*r); UNLOCK(); done+=r; }
+  type=texture_type(type);
+  u32 row_bytes=w*texture_bpp(fmt,type), stride=unpack_stride(row_bytes);
+  s32 rows_per=(CHUNK*2)/(stride?stride:1);
+  if(rows_per<1) rows_per=1;
+  for(s32 done=0;done<h;){
+    s32 rows=h-done;
+    if(rows>rows_per) rows=rows_per;
+    /* Unpack alignment governs the gaps between rows. */
+    u32 bytes=(rows-1)*stride+row_bytes;
+    LOCK();
+    u32 *p=br_begin(OP_TEXSUBIMAGE,9+(bytes+3)/4);
+    p[0]=target;p[1]=level;p[2]=x;p[3]=y+done;p[4]=w;p[5]=rows;p[6]=fmt;p[7]=type;p[8]=bytes;
+    wcopy(p+9,(const u8*)pix+(u32)done*stride,bytes);
+    UNLOCK();
+    done+=rows;
+  }
 }
 void glTexImage2D(u32 target,s32 level,s32 ifmt,s32 w,s32 h,s32 border,u32 fmt,u32 type,const void*pix){
-  u32 bpp=pixbpp(fmt,type); u32 row=(w*bpp+unpack_align-1)/unpack_align*unpack_align; u32 tot=row*h; u32*p;
-  if(!pix||tot>CHUNK*2){
-    LOCK(); p=br_begin(OP_TEXIMAGE,10); p[0]=target;p[1]=level;p[2]=ifmt;p[3]=w;p[4]=h;p[5]=border;p[6]=fmt;p[7]=type;p[8]=0;p[9]=0; UNLOCK();
-    if(pix) glTexSubImage2D(target,level,0,0,w,h,fmt,type,pix);
-    return; }
-  LOCK(); p=br_begin(OP_TEXIMAGE,10+(tot+3)/4); p[0]=target;p[1]=level;p[2]=ifmt;p[3]=w;p[4]=h;p[5]=border;p[6]=fmt;p[7]=type;p[8]=1;p[9]=tot; wcopy(p+10,pix,tot); UNLOCK();
+  type=texture_type(type);
+  u64 span=0;
+  if(pix&&w>0&&h>0){
+    u32 row_bytes=w*texture_bpp(fmt,type);
+    span=(u64)(h-1)*unpack_stride(row_bytes)+row_bytes;
+  }
+  u32 bytes=span<=CHUNK*2 ? (u32)span : 0;
+  LOCK();
+  u32 *p=br_begin(OP_TEXIMAGE,10+(bytes+3)/4);
+  p[0]=target;p[1]=level;p[2]=ifmt;p[3]=w;p[4]=h;p[5]=border;p[6]=fmt;p[7]=type;p[8]=bytes!=0;p[9]=bytes;
+  if(bytes) wcopy(p+10,pix,bytes);
+  UNLOCK();
+  if(span>CHUNK*2) glTexSubImage2D(target,level,0,0,w,h,fmt,type,pix);
 }
 /* ---- shaders ---- */
 void glShaderSource(u32 sh,s32 count,const char*const*str,const s32*len){
