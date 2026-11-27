@@ -18,15 +18,14 @@ static eb_t *eb_find(u32 id,int create){
 static u32 tsize(u32 type){ switch(type){case 0x1400:case 0x1401:return 1;case 0x1402:case 0x1403:return 2;case 0x1404:case 0x1405:case 0x1406:return 4;default:return 4;} }
 static u32 pixel_components(u32 fmt){
   switch(fmt){
-    case 0x1902: case 0x1903: case 0x1906: case 0x1909: return 1;
-    case 0x190A: case 0x8227: return 2;
+    case 0x1902: case 0x1906: case 0x1909: return 1;
+    case 0x190A: return 2;
     case 0x1907: return 3;
     default: return 4;
   }
 }
 static u32 pixbpp(u32 fmt,u32 type){
   switch(type){ case 0x8363:case 0x8033:case 0x8034:return 2; case 0x1403:case 0x1402: if(fmt==0x1902||fmt==0x84F9) return 2; break; case 0x1405: case 0x84FA: return 4; }
-  if(type==GL_HALF_FLOAT||type==GL_HALF_FLOAT_OES) return pixel_components(fmt)*2;
   return pixel_components(fmt)*tsize(type);
 }
 static void wcopy(u32*dst,const void*src,u32 n){ memcpy(dst,src,n); if(n&3) memset((u8*)dst+n,0,4-(n&3)); }
@@ -85,13 +84,21 @@ void glBufferData(u32 target,s32 size,const void*data,u32 usage){
 static u32 texture_type(u32 type){
   return type==GL_HALF_FLOAT_OES ? GL_HALF_FLOAT : type;
 }
+static u32 texture_bpp(u32 fmt,u32 type){
+  if(type!=GL_HALF_FLOAT) return pixbpp(fmt,type);
+  switch(fmt){
+    case 0x1903: return 2; /* GL_RED */
+    case 0x8227: return 4; /* GL_RG */
+    default: return 2*pixel_components(fmt);
+  }
+}
 static u32 unpack_stride(u32 row_bytes){
   return (row_bytes+unpack_align-1)/unpack_align*unpack_align;
 }
 void glTexSubImage2D(u32 target,s32 level,s32 x,s32 y,s32 w,s32 h,u32 fmt,u32 type,const void*pix){
   if(!pix||w<=0||h<=0) return;
   type=texture_type(type);
-  u32 row_bytes=w*pixbpp(fmt,type), stride=unpack_stride(row_bytes);
+  u32 row_bytes=w*texture_bpp(fmt,type), stride=unpack_stride(row_bytes);
   s32 rows_per=(CHUNK*2)/(stride?stride:1);
   if(rows_per<1) rows_per=1;
   for(s32 done=0;done<h;){
@@ -111,7 +118,7 @@ void glTexImage2D(u32 target,s32 level,s32 ifmt,s32 w,s32 h,s32 border,u32 fmt,u
   type=texture_type(type);
   u64 span=0;
   if(pix&&w>0&&h>0){
-    u32 row_bytes=w*pixbpp(fmt,type);
+    u32 row_bytes=w*texture_bpp(fmt,type);
     span=(u64)(h-1)*unpack_stride(row_bytes)+row_bytes;
   }
   u32 bytes=span<=CHUNK*2 ? (u32)span : 0;
