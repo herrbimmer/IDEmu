@@ -590,6 +590,7 @@ class H(BaseHTTPRequestHandler):
             root = os.path.abspath(os.path.expanduser(d.get('path') or ''))
             if os.path.isfile(root): root = os.path.dirname(root)
             if not os.path.isdir(root): raise ApiError('pasta inexistente', 404)
+            if kind == 'mgu22': return catalog.stage_mgu22_folder(root)
             req = catalog.required_packages(kind)
             r = catalog.scan_folder(root, [x['id'] for x in req])
             want = {x['id']: x['version'] for x in req}; n = 0

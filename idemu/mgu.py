@@ -5,7 +5,7 @@ mguhost.exe; o console do guest é um chardev TCP em 127.0.0.1 (no lugar do FIFO
 roda em WHPX (só Windows on ARM) ou em TCG (emulação pura, bem mais lenta que o HVF do Mac)."""
 try: import _posixshmem            # iDrive 8 (macOS): memória compartilhada POSIX; não existe no Windows
 except ImportError: _posixshmem = None
-import glob, json, mmap, os, platform, re, shutil, struct, subprocess, sys, threading, time
+import glob, json, mmap, os, platform, re, shutil, struct, subprocess, sys, tempfile, threading, time, uuid
 from . import runtime, coding8, ipc, hostos
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -137,24 +137,37 @@ def _cpio(items):
     ent('TRAILER!!!', 0, b'', len(items) + 1)
     return bytes(out)
 
-def _commit_free_mb():
-    """Windows: memória virtual (commit) ainda disponível em MB (RAM + arquivo de paginação); 0 se não souber."""
+def _windows_ram(name, directory):
+    """Cria uma seção nomeada com arquivo temporário como backing da RAM do guest."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    size = MB << 20
+    free = shutil.disk_usage(directory).free
+    if free < size:
+        raise OSError('o iDrive 8 precisa de %s GiB livres para a RAM temporária em %s' % (MB >> 10, directory))
+    mark_sparse = ctypes.WinDLL('kernel32', use_last_error=True).DeviceIoControl
+    mark_sparse.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                            wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID)
+    mark_sparse.restype = wintypes.BOOL
+    fsctl_set_sparse = 0x000900C4
+    storage = tempfile.TemporaryFile(prefix='idemu-ram-', suffix='.bin', dir=directory)
     try:
-        import ctypes
-        class MS(ctypes.Structure):
-            _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong), ('ullTotalPhys', ctypes.c_ulonglong), ('ullAvailPhys', ctypes.c_ulonglong),
-                        ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong), ('ullTotalVirtual', ctypes.c_ulonglong),
-                        ('ullAvailVirtual', ctypes.c_ulonglong), ('sullAvailExtendedVirtual', ctypes.c_ulonglong)]
-        m = MS(); m.dwLength = ctypes.sizeof(m)
-        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)): return int(m.ullAvailPageFile) >> 20
-    except Exception: pass
-    return 0
+        handle = msvcrt.get_osfhandle(storage.fileno())
+        mark_sparse(handle, fsctl_set_sparse, None, 0, None, 0, ctypes.byref(wintypes.DWORD()), None)
+        mapping = mmap.mmap(storage.fileno(), size, tagname=name)
+    except BaseException:
+        storage.close()
+        raise
+    # Keep storage open until both child processes exit. Closing a delete-on-close
+    # file while the guest still uses its section can lose nonresident pages.
+    return mapping, storage
+
 
 def _prepare_ram(dtb_out, coding_tab=None):
-    """Cria a RAM do guest (objeto POSIX compartilhado) já com o initramfs dentro e grava a árvore de dispositivos.
-    macOS/Linux: devolve None (o objeto fica em SHM). Windows: seção nomeada (mmap com tagname); devolve (mmap, nome): quem chama o mantém aberto até o QEMU e o mguhost
-    abrirem a seção (ela some quando o último handle fecha) e depois o fecha."""
-    boot = open(TOOLS + '/guest_boot.sh', 'rb').read()
+    """Carrega o initramfs e grava o DTB. No Windows devolve (mmap, nome da seção, arquivo de backing)."""
+    with open(TOOLS + '/guest_boot.sh', 'rb') as f: boot = f.read()
     if IS_WIN: boot = boot.replace(b'\r\n', b'\n')      # checkout com CRLF quebraria o "#!/bin/sh" do guest
     items = [('idemu', 0o40755, b''), ('idemu.sh', 0o100755, boot)]
     for f in GUEST_FILES:
@@ -163,13 +176,14 @@ def _prepare_ram(dtb_out, coding_tab=None):
     items.append(('idemu/usbfake', 0o40755, b''))   # libusb e libudev falsas, só para o devicemanager
     for f in USBFAKE: items.append(('idemu/usbfake/' + f, 0o100755, open(f'{OUT}/guest/{f}', 'rb').read()))
     name = None
+    storage = None
     if IS_WIN:
         # nome único por partida: uma seção antiga ainda aberta por um QEMU em encerramento não pode ser reaproveitada (traria canais velhos)
-        name = 'idemu_ram_%d_%d' % (os.getpid(), int(time.time() * 1000) & 0xffffffff)
-        try: m = mmap.mmap(-1, MB << 20, tagname=name)
+        name = 'idemu_ram_' + uuid.uuid4().hex
+        try:
+            m, storage = _windows_ram(name, os.path.dirname(dtb_out))
         except OSError as e:
-            raise RuntimeError('sem memória virtual para os %d GiB de RAM do iDrive 8 (livre: %d MiB de RAM + arquivo de paginação): feche programas ou aumente o arquivo de paginação (%s)'
-                               % (MB >> 10, _commit_free_mb(), e))
+            raise RuntimeError('não consegui mapear a RAM temporária do iDrive 8: %s' % e) from e
     else:
         try: _posixshmem.shm_unlink(SHM)
         except OSError: pass
@@ -178,39 +192,58 @@ def _prepare_ram(dtb_out, coding_tab=None):
         m = mmap.mmap(fd, MB << 20, mmap.MAP_SHARED)
     pos = INITRD_AT - GUEST_BASE
     try:
-        with open(OUT + '/base.cpio', 'rb') as f:
+        with open(TOOLS + '/virt_mgu22.dtb', 'rb') as f:
+            d = f.read()
+        ph = struct.pack('>II', 0xdeadbeef, 0xfeedf00d)
+        ov = _cpio(items)
+        image = OUT + '/base.cpio'
+        end = GUEST_BASE + ((pos + os.path.getsize(image) + 3) & ~3) + len(ov)
+        if end > GUEST_BASE + (MB << 20) or ph not in d:
+            raise RuntimeError('initramfs não cabe na RAM do guest')
+        with open(image, 'rb') as f:
             while True:
                 b = f.read(1 << 24)
                 if not b: break
                 m[pos:pos + len(b)] = b; pos += len(b)
         pos = (pos + 3) & ~3
-        ov = _cpio(items); m[pos:pos + len(ov)] = ov; pos += len(ov)
+        m[pos:pos + len(ov)] = ov
+        end = GUEST_BASE + pos + len(ov)
+        with open(dtb_out, 'wb') as f:
+            f.write(d.replace(ph, struct.pack('>II', end >> 32, end & 0xffffffff)))
     except BaseException:
-        if IS_WIN: m.close()
+        m.close()
+        if storage is not None:
+            storage.close()
+        else:
+            os.close(fd)
+            try: _posixshmem.shm_unlink(SHM)
+            except OSError: pass
         raise
     if not IS_WIN: m.close(); os.close(fd)
-    d = open(TOOLS + '/virt_mgu22.dtb', 'rb').read()
-    end = GUEST_BASE + pos
-    ph = struct.pack('>II', 0xdeadbeef, 0xfeedf00d)
-    if end > GUEST_BASE + (MB << 20) or ph not in d:
-        if IS_WIN: m.close()
-        raise RuntimeError('initramfs não cabe na RAM do guest')
-    open(dtb_out, 'wb').write(d.replace(ph, struct.pack('>II', end >> 32, end & 0xffffffff)))
-    return (m, name) if IS_WIN else None
+    return (m, name, storage) if IS_WIN else None
 
 class MguRuntime(runtime.Runtime):
     kind = 'mgu22'; disp = (2880, 960)
     def __init__(self, env_dir, env, debug=False):
         runtime.Runtime.__init__(self, env_dir, env)
         self.debug = debug; self.ctl = self.run; self.console_in = os.path.join(self.run, 'console.in'); self._keep = None; self._sock = None
-        self._ram = None; self._ser = None; self._ser_lock = threading.Lock()      # Windows: seção da RAM (mmap) e socket do console do guest
+        self._ram = None; self._ram_backing = None; self._ser = None; self._ser_lock = threading.Lock()
+        self._render_dir = None
     def start(self, cold=False):
         if not image_ready(): raise RuntimeError('imagem do iDrive 8 não montada')
         for d in (self.run, self.logd): os.makedirs(d, exist_ok=True)
-        for f in ('frame.rgb', 'input.sock', 'console.in') + (('input.sock.port', 'shell.sock.port', 'console.sock.port') if IS_WIN else ()):   # Windows: portas novas a cada partida
+        if IS_WIN:
+            # Um leitor do servidor anterior pode manter o frame.rgb mapeado depois da parada.
+            self._render_dir = tempfile.TemporaryDirectory(prefix='mgu-render-', dir=self.run, ignore_cleanup_errors=True)
+            self.frame_path = os.path.join(self._render_dir.name, 'frame.rgb')
+            stale = ('input.sock.port', 'shell.sock.port', 'console.sock.port')
+        else:
+            stale = ('frame.rgb', 'input.sock', 'console.in')
+        for f in stale:
             try: os.unlink(os.path.join(self.run, f))
             except OSError: pass
-        self._climate_set = False; self._t_clock = 0; self.state = 'booting'; self.err = None; self.t0 = time.time(); self.boot_kind = 'cold'; self.stop_ev.clear(); self.marks = {}; self._fm = None; self._lastseq = None
+        self._climate_set = False; self._t_clock = 0; self.state = 'booting'; self.err = None; self.t0 = time.time(); self.boot_kind = 'cold'; self.stop_ev.clear(); self.marks = {}; self._fm = None; self._lastseq = None; self._exits = (0, 0, b'')
+        self._png = (None, None)
         self.step = 'Preparando a memória do sistema'; self.pct = 5
         threading.Thread(target=self._boot_thread, daemon=True).start()
     def _car_state(self):
@@ -256,17 +289,22 @@ class MguRuntime(runtime.Runtime):
         lf = open(os.path.join(self.logd, 'console.log'), 'wb')
         threading.Thread(target=self._pump_console, args=(s, lf), daemon=True).start()
     def _pump_console(self, s, lf):
+        window = b''
         try:
             while not self.stop_ev.is_set():
                 d = s.recv(4096)
                 if not d: break
                 lf.write(d); lf.flush()
                 if self.mux: self.mux.feed(d)
+                if b'Kernel panic - not syncing:' in window + d:
+                    self._console_panic = True
+                window = (window + d)[-32:]
         except (OSError, ValueError): pass
         finally:
             try: lf.close()
             except OSError: pass
     def _boot_thread(self):
+        self._console_panic = False
         try:
             angle = find_angle()
             dtb = os.path.join(self.run, 'boot.dtb')
@@ -277,19 +315,27 @@ class MguRuntime(runtime.Runtime):
             if IS_WIN and not os.path.isfile(QEMU): raise RuntimeError('qemu-system-aarch64.exe não encontrado em bin/: compile com "bash tools/qemu/build-aarch64-windows.sh" no shell MSYS2 MINGW64')
             ram = _prepare_ram(dtb, tab); self._mark('ram')
             shm = SHM
-            if IS_WIN: self._ram, shm = ram
+            if IS_WIN:
+                with self._life:
+                    if self.stop_ev.is_set():
+                        mapping, _, storage = ram
+                        mapping.close()
+                        storage.close()
+                        raise runtime.BootStopped()
+                    self._ram, shm, self._ram_backing = ram
             self.step = 'Iniciando o renderizador'; self.pct = 10
             hl = open(os.path.join(self.logd, 'renderer.log'), 'wb')
             gkw = {}
             if IS_WIN:       # entrada por UDP em 127.0.0.1; no WHPX o QEMU não aparece no working set com as páginas que o guest usa: varredura completa
                 gkw['env'] = dict(os.environ, MGUHOST_INPUT=ipc.addr(self.run, 'input.sock'), **({'MGUHOST_FULLSCAN': '1'} if accel == 'whpx' else {}))
-            self._spawn('gl', [host, shm, str(MB), self.run, angle], stdout=hl, stderr=hl, **gkw)
+            self._spawn('gl', [host, shm, str(MB), os.path.dirname(self.frame_path), angle], stdout=hl, stderr=hl, **gkw)
             time.sleep(0.5)
             args = 'console=ttyAMA0 loglevel=3 rdinit=/idemu.sh rootfstype=ramfs selinux=0 enforcing=0 panic=0 log_buf_len=2M' + (' idemu.debug' if self.debug else '') + (' idemu.dlt' if os.environ.get('IDEMU_MGU_DLT') else '') + (' idemu.usb' if os.environ.get('IDEMU_MGU_USB') else '') + ' idemu.time=%d' % time.time()
             if IS_WIN:
+                args += ' initramfs_async=0'
                 # console do guest: chardev TCP (QEMU escuta e espera o IDEmu; ver _con_connect). Mais robusto que o stdio do QEMU no Windows, que quer um console de verdade.
                 con = ipc.addr(self.run, 'console.sock')
-                cmd = [QEMU, '-M', 'virt,gic-version=3,memory-backend=m0'] + qargs + ['-m', str(MB), '-smp', '4', '-display', 'none', '-monitor', 'none',
+                cmd = [QEMU, '-M', 'virt,gic-version=3,memory-backend=m0'] + qargs + ['-m', str(MB), '-smp', '4', '-nodefaults', '-display', 'none', '-monitor', 'none',
                        '-chardev', 'socket,id=con0,host=%s,port=%d,server=on,wait=on' % (ipc.LOOPBACK, ipc.port_of(con)), '-serial', 'chardev:con0',
                        '-object', f'memory-backend-winshm,id=m0,size={MB}M,shm-name={shm}', '-dtb', dtb, '-kernel', OUT + '/Image', '-append', args]
                 ql = open(os.path.join(self.logd, 'qemu.log'), 'wb')
@@ -313,6 +359,7 @@ class MguRuntime(runtime.Runtime):
             while not self.stop_ev.is_set():
                 if self.q.poll() is not None: raise RuntimeError('o QEMU terminou (%s); veja logs/%s' % (self.q.returncode, 'qemu.log' if IS_WIN else 'console.log'))
                 if self.gl.poll() is not None: raise RuntimeError('o renderizador terminou (%s); veja logs/renderer.log' % self.gl.returncode)
+                if self._console_panic: raise RuntimeError('o kernel do iDrive 8 parou; veja logs/console.log')
                 if not unlinked and self.frame_seq() >= 1:
                     unlinked = True
                     self._ram_release()
@@ -331,8 +378,20 @@ class MguRuntime(runtime.Runtime):
             if not self.stop_ev.is_set(): self.err = str(e); self.state = 'error'; self._kill_children()
             else:                                  # parado durante o preparo: _prepare_ram pode ter criado o shm depois do _kill_children (GBs de RAM presos)
                 self._ram_release()
+                self._ram_backing_close()
+    def _ram_backing_close(self):
+        backing, self._ram_backing = self._ram_backing, None
+        if backing is not None:
+            backing.close()
     def _kill_children(self):
         runtime.Runtime._kill_children(self)
+        with self._cmd_lock:
+            sock, self._sock = self._sock, None
+            if sock is not None:
+                sock.close()
+        render_dir, self._render_dir = self._render_dir, None
+        if render_dir is not None:
+            render_dir.cleanup()
         if self._keep is not None:
             try: os.close(self._keep)
             except OSError: pass
@@ -340,6 +399,7 @@ class MguRuntime(runtime.Runtime):
         with self._ser_lock: s, self._ser = self._ser, None
         if s is not None: ipc.shutdown_close(s)
         self._ram_release()
+        self._ram_backing_close()
     def status(self):
         s = runtime.Runtime.status(self); s['kind'] = self.kind; s['disp'] = list(self.disp); s['hmi_exits'] = self.hmi_exits()
         return s

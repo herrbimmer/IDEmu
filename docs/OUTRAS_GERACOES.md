@@ -43,8 +43,9 @@ python3 tools/mgu/run.py --debug
 | Tema | `Adaptive` fixo; sem o serviço My Modes o HMI cairia em `Unicorn` ou `Artmode_*` |
 | Perfil, privacidade, mídia, contatos, dispositivos, telefone | Daemons do firmware: `persod`, `dataprivacyd`, `mediaapp`, `pim`, `devicemanager`, `telephonymanager`, com D-Bus |
 
-De onde vêm os dados, todos em versão `007_034_003`:
-| Dados | Pacote |
+O iDrive 8 do BMW i7 G70 usa seis pacotes da mesma versão em uma única árvore PSdZData. São aceitas `007_034_003` e `007_023_004`, nessa ordem quando as duas estão completas na mesma pasta. O seletor também aceita os seis arquivos avulsos. Uma imagem já montada continua compartilhada entre os ambientes iDrive 8.
+
+| Origem dos dados | Pacote |
 |---|---|
 | Kernel e raiz | `swfl_00009ff7` |
 | Contêiner IVI com `/usr/bin/Hmi8` | `swfl_00009fc6` |

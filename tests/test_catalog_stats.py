@@ -70,7 +70,7 @@ class PackagesTest(unittest.TestCase):
                 self.assertFalse(catalog.packages_ok('mgu22'))
                 req = catalog.required_packages('mgu22')
                 for r in req:
-                    f = os.path.join(tmp, 'swfl_%s.bin.%s' % (r['id'], r['version'])); open(f, 'wb').write(b'x')
+                    f = os.path.join(tmp, '{prefix}_{id}.bin.{version}'.format(**r)); open(f, 'wb').write(b'x')
                     self.assertTrue(catalog.stage_file(f, 'mgu22')[0])
                 self.assertTrue(catalog.packages_ok('mgu22'))
                 bad = os.path.join(tmp, 'swfl_%s.bin.001_001_001' % req[0]['id']); open(bad, 'wb').write(b'x')

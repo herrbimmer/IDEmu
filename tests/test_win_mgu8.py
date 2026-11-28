@@ -1,5 +1,5 @@
 """iDrive 8 no Windows: lógica Python do port (ANGLE, aceleração, RAM compartilhada, console). Usa mocks de ipc.IS_WIN/mgu.IS_WIN: passa em qualquer sistema."""
-import os, socket, struct, sys, tempfile, threading, unittest
+import mmap, os, socket, struct, sys, tempfile, threading, unittest
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from idemu import mgu
@@ -98,29 +98,51 @@ class PrepareRamWinTest(unittest.TestCase):
             os.makedirs(t + '/guest')
             for f in mgu.GUEST_FILES: open(t + '/guest/' + f, 'wb').write(b'x')
             open(t + '/base.cpio', 'wb').write(b'c' * 1000)
-            created = []
-            def fake_mmap(fileno, length, tagname=None, **kw):
-                m = FakeMap(fileno, length, tagname); created.append(m); return m
-            with mock.patch.object(mgu, 'IS_WIN', True), mock.patch.object(mgu, 'OUT', t), mock.patch.object(mgu.mmap, 'mmap', fake_mmap):
-                r = mgu._prepare_ram(t + '/boot.dtb')
-            m, name = r
-            self.assertIs(m, created[0]); self.assertFalse(m.closed)             # o Python mantém a seção aberta até o QEMU e o mguhost a abrirem
-            self.assertEqual(m.length, mgu.MB << 20); self.assertEqual(m.tag, name)
-            self.assertRegex(name, r'^idemu_ram_\d+_\d+$')
+            backing = mock.Mock()
+
+            def fake_ram(name, folder):
+                self.assertEqual(folder, t)
+                return FakeMap(None, mgu.MB << 20, name), backing
+
+            with mock.patch.object(mgu, 'IS_WIN', True), mock.patch.object(mgu, 'OUT', t), mock.patch.object(mgu, '_windows_ram', fake_ram):
+                m, name, storage = mgu._prepare_ram(t + '/boot.dtb')
+            self.assertIs(storage, backing)
+            backing.close.assert_not_called()
+            self.assertFalse(m.closed)
+            self.assertEqual(m.length, mgu.MB << 20)
+            self.assertEqual(m.tag, name)
+            self.assertRegex(name, r'^idemu_ram_[0-9a-f]{32}$')
             self.assertEqual(m.w[0][0], mgu.INITRD_AT - mgu.GUEST_BASE)
             d = open(t + '/boot.dtb', 'rb').read()
             self.assertNotIn(struct.pack('>II', 0xdeadbeef, 0xfeedf00d), d)       # o marcador do fim do initramfs foi trocado
 
-    def test_commit_failure_message(self):
+    def test_mapping_failure_message(self):
         with tempfile.TemporaryDirectory() as t:
             os.makedirs(t + '/guest')
             for f in mgu.GUEST_FILES: open(t + '/guest/' + f, 'wb').write(b'x')
             open(t + '/base.cpio', 'wb').write(b'c')
-            def boom(*a, **k): raise OSError(1455, 'paging file too small')
-            with mock.patch.object(mgu, 'IS_WIN', True), mock.patch.object(mgu, 'OUT', t), mock.patch.object(mgu.mmap, 'mmap', boom):
+            def boom(*a, **k): raise OSError('not enough space for the mapping')
+            with mock.patch.object(mgu, 'IS_WIN', True), mock.patch.object(mgu, 'OUT', t), mock.patch.object(mgu, '_windows_ram', boom):
                 with self.assertRaises(RuntimeError) as c:
                     mgu._prepare_ram(t + '/boot.dtb')
-                self.assertIn('arquivo de paginação', str(c.exception))
+                self.assertIn('not enough space for the mapping', str(c.exception))
+
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows named section')
+    def test_file_backed_section_lifetime(self):
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(mgu, 'MB', 1):
+            tag = 'idemu-test-' + os.path.basename(folder)
+            mapping, storage = mgu._windows_ram(tag, folder)
+            try:
+                with mmap.mmap(-1, 1 << 20, tagname=tag) as consumer:
+                    mapping[:4] = b'IDEM'
+                    mapping.close()
+                    self.assertEqual(consumer[:4], b'IDEM')
+                    self.assertFalse(storage.closed)
+            finally:
+                mapping.close()
+                storage.close()
+            self.assertEqual(os.listdir(folder), [])
 
 
 class ConsoleWinTest(unittest.TestCase):

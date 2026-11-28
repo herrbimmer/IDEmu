@@ -6,9 +6,10 @@ import posixpath
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 OUT = os.path.join(ROOT, 'mgu22')
-VER, VERK = '007_034_003', '007_034_003'
 sys.path.insert(0, HERE)
+sys.path.insert(0, ROOT)
 from ext4ls import E4
+from idemu import catalog
 
 def simg(src, dst):
     subprocess.check_call([sys.executable, os.path.join(HERE, 'simg2raw.py'), src, dst])
@@ -35,6 +36,11 @@ def build_guest(sysroot, gdir):
     if os.name != 'nt':
         subprocess.check_call(['zsh', os.path.join(ROOT, 'src/mgu22/build.sh'), sysroot, gdir])
         return
+    zig = os.environ.get('IDEMU_MGU_ZIG')
+    if zig:
+        from build_guest_windows import build
+        build(sysroot, gdir, os.path.abspath(zig))
+        return
     fw = lambda p: os.path.abspath(p).replace('\\', '/')
     env = dict(os.environ, MSYSTEM='MINGW64', CHERE_INVOKING='1', PYTHON=fw(sys.executable), PYTHONUTF8='1')
     # captura a saída: sem console (CREATE_NO_WINDOW) o bash do MSYS2 não repassa o stderr ao log do IDEmu, e uma falha ficaria sem mensagem
@@ -47,10 +53,15 @@ def main():
     psdz = next((a for a in sys.argv[1:] if not a.startswith('--')), None)
     if not psdz:
         psdz = json.load(open(os.path.join(ROOT, 'settings.json')))['psdz_path']
-    swfl, swfk = os.path.join(psdz, 'swe/swfl'), os.path.join(psdz, 'swe/swfk')
+    _, version, files = catalog.mgu22_firmware(psdz, include_staged=False)
+    missing = [os.path.basename(path) for _, path in files if not os.path.isfile(path)]
+    if missing:
+        raise RuntimeError('faltam arquivos do iDrive 8: ' + ', '.join(missing))
+    packages = {item['id']: path for item, path in files}
+    print('Firmware MGU22:', version)
     tmp = tempfile.mkdtemp(prefix='mgu22', dir=os.path.dirname(OUT)); os.makedirs(OUT, exist_ok=True)
     try:
-        print('kernel e raiz'); f = os.path.join(swfl, f'swfl_00009ff7.bin.{VER}')
+        print('kernel e raiz'); f = packages['00009ff7']
         member(f, 'sa81x5-boot.img.bin.gz', tmp + '/boot.gz')
         b = gzip.open(tmp + '/boot.gz').read()
         assert b[:8] == b'ANDROID!'
@@ -59,9 +70,9 @@ def main():
         member(f, 'mgu22-bmw-image-mgu22-sa8155.ext4.simg.bin.gz', tmp + '/root.gz')
         simg(tmp + '/root.gz', tmp + '/root.raw'); os.unlink(tmp + '/root.gz')
         print('IVI e EXT')
-        member(os.path.join(swfl, f'swfl_00009fc6.bin.{VER}'), 'mgu22-ivi-sa8155.ext4.simg.bin.gz', tmp + '/ivi.gz')
+        member(packages['00009fc6'], 'mgu22-ivi-sa8155.ext4.simg.bin.gz', tmp + '/ivi.gz')
         simg(tmp + '/ivi.gz', tmp + '/ivi.raw'); os.unlink(tmp + '/ivi.gz')
-        member(os.path.join(swfl, f'swfl_00009ff9.bin.{VER}'), 'mgu22-ext-sa8155.ext4.simg.bin.gz', tmp + '/ext.gz')
+        member(packages['00009ff9'], 'mgu22-ext-sa8155.ext4.simg.bin.gz', tmp + '/ext.gz')
         simg(tmp + '/ext.gz', tmp + '/ext.raw'); os.unlink(tmp + '/ext.gz')
         # raiz do link das bibliotecas do guest e tabela de codificação
         sysroot = OUT + '/sysroot'; os.makedirs(sysroot + '/lib', exist_ok=True); os.makedirs(sysroot + '/usr/lib', exist_ok=True)
@@ -94,7 +105,7 @@ def main():
         cps = []
         for a, b_, dst in pk:
             n = f'swfk-0000{a}.{b_}.ext4.bin.gz'
-            member(os.path.join(swfk, f'swfk_0000{a}.bin.{VERK}'), n, tmp + '/p.gz')
+            member(packages[f'0000{a}'], n, tmp + '/p.gz')
             with gzip.open(tmp + '/p.gz') as g, open(tmp + '/p.raw', 'wb') as o: shutil.copyfileobj(g, o, 1 << 20)
             c = f'{tmp}/{a}.cpio'; ext2cpio(tmp + '/p.raw', c, '/', dst); cps.append(c)
             os.unlink(tmp + '/p.gz'); os.unlink(tmp + '/p.raw')
