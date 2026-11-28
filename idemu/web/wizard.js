@@ -375,7 +375,26 @@
         h('h3', null, 'Qual tela do iDrive 7?'),
         h('p', { class: 'help' }, 'O iDrive 7 tem duas telas com o mesmo software. Cada ambiente emula uma delas.'),
         h('div', { class: 'vmhome-row' }, opts.map(([id, t, sub]) => h('button', { type: 'button', class: 'opt' + (W.role === id ? ' sel' : ''), onclick: () => { W.role = id; render(); } },
-          h('span', { class: 'opt-main' }, h('b', null, t), h('span', null, sub)), W.role === id ? ic('check', 16) : null))));
+          h('span', { class: 'opt-main' }, h('b', null, t), h('span', null, sub)), W.role === id ? ic('check', 16) : null))),
+        W.role === 'hu' ? huCodingBlock() : null);
+    }
+    function huCodingBlock() {
+      return h('div', null,
+        h('label', { class: 'lbl', for: 'hu-coding-capture' }, 'Codificação da tela central (opcional)'),
+        h('p', { class: 'help' }, 'Use uma captura rawcodingdata de 4144 bytes de um head unit com a mesma versão de HMI. Sem captura, o IDEmu usa a configuração genérica.'),
+        h('input', { class: 'input', id: 'hu-coding-capture', type: 'file', onchange: (ev) => {
+          const file = ev.target.files[0];
+          if (file && file.size !== 4144) {
+            W.huCodingCapture = null;
+            render();
+            toast('Use uma captura rawcodingdata válida da tela central do iDrive 7 (4144 bytes).', 'error');
+            return;
+          }
+          W.huCodingCapture = file || null;
+          render();
+        } }),
+        W.huCodingCapture ? h('div', { class: 'vmhome-row' }, h('span', { class: 'mono small' }, W.huCodingCapture.name),
+          h('button', { class: 'btn ghost', type: 'button', onclick: () => { W.huCodingCapture = null; render(); } }, 'Remover captura')) : null);
     }
     function pkgBlock() {
       const k = genObj() && genObj().direct; if (!k) return null;
@@ -635,7 +654,15 @@
     async function createAndBuild() {
       W.phase = 'creating'; W.build = { state: 'none', pct: 0, step: 'Criando ambiente…', log: [] }; render();
       try {
-        if (!W.env) W.env = await post('/api/env/create', bodyFromState());
+        if (!W.env) {
+          const body = bodyFromState();
+          if (body.kind === 'mgu7' && body.role === 'hu' && W.huCodingCapture) {
+            const bytes = new Uint8Array(await W.huCodingCapture.arrayBuffer());
+            body.hu_coding_capture = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+          }
+          W.env = await post('/api/env/create', body);
+          W.huCodingCapture = null;
+        }
       } catch (e) { toastErr(e); W.phase = 'edit'; render(); return; }
       await startBuild();
     }

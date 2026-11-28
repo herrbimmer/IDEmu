@@ -14,6 +14,7 @@ AREA_LABELS = {'HMI_SPEECH': 'HMI and speech', 'CONNECTIVITY_A4A': 'Connectivity
                'TOUCH_COMMAND': 'Touch Command', 'KOMBI_HUD': 'Cluster and head-up display', 'LANGUAGE': 'Languages', 'M_GMBH': 'BMW M'}
 STATUS_OFFSET, DATA_OFFSET = 0x28, 0x2c                 # no rawcodingdata: byte de estado e início das áreas
 STATUS_REAL = 0x09                                      # bit 3 (bloco presente) + bit 0 (dados reais em +0x2c)
+CAPTURE_SIZE = 4144
 _cache = {}
 # Com a codificação de fábrica do HMI (tudo desligado) o toque na tela central não faz nada: um ambiente novo já nasce com o toque codificado.
 DEFAULT_HU = {'CID_TOUCH': 1, 'ZBE_TOUCH': 1, 'CID_TOUCH_SL': 1, 'CID_HMI_TOUCH': 1, 'CID_TOUCH_PROXIMITY': 1}
@@ -53,6 +54,12 @@ def fields(env):
     key = ('fields', lay)
     if key in _cache and _cache.get('m') == os.path.getmtime(path()):
         return _cache[key]
+    out = _fields_for_layout(d, areas, lay)
+    _cache[key] = out
+    return out
+
+
+def _fields_for_layout(d, areas, lay):
     out = {}
     for p in d['params']:
         a = areas.get(p['area'] & 0xff)
@@ -64,7 +71,6 @@ def fields(env):
         m = p['mask']
         shift = (m & -m).bit_length() - 1
         out[p['name']] = {'name': p['name'], 'area': a['name'], 'pos': off + p['start'], 'mask': m, 'shift': shift, 'bits': bin(m).count('1'), 'vals': p['vals']}
-    _cache[key] = out
     return out
 
 
@@ -77,15 +83,52 @@ def get_value(f, blob):
     return (blob[f['pos']] & f['mask']) >> f['shift']
 
 
+def parse_hu_capture(value):
+    """Read a complete rawcodingdata snapshot, not an E-Sys CAFD or NCD file."""
+    message = 'Use uma captura rawcodingdata válida da tela central do iDrive 7 (4144 bytes).'
+    if not isinstance(value, str) or len(value) != 2 * CAPTURE_SIZE:
+        raise ValueError(message)
+    try:
+        raw = bytes.fromhex(value)
+    except ValueError as exc:
+        raise ValueError(message) from exc
+    if len(raw) != CAPTURE_SIZE or raw[STATUS_OFFSET] != STATUS_REAL:
+        raise ValueError(message)
+    return raw
+
+
+def hu_capture_overrides(raw, schema):
+    """Keep named HU fields only. Unknown bytes stay at the HMI's factory values."""
+    areas = {a['id'] & 0xff: a for a in schema['areas']}
+    editable = _fields_for_layout(schema, areas, 'hu')
+    factory = bytes.fromhex(schema['blob']['hu'])
+    if not editable or len(factory) > len(raw) - DATA_OFFSET or any(f['pos'] >= len(factory) for f in editable.values()):
+        raise ValueError('O dicionário de codificação não corresponde ao layout da tela central.')
+    payload = raw[DATA_OFFSET:DATA_OFFSET + len(factory)]
+    overrides = {}
+    for name, field in editable.items():
+        value = get_value(field, payload)
+        if value == get_value(field, factory):
+            continue
+        options = field['vals']
+        if value >= 1 << field['bits'] or (options and not any(v == value or tag == 'VariantVal' for v, tag in options)):
+            raise ValueError('A captura contém um valor incompatível com o firmware: %s.' % name)
+        overrides[name] = value
+    return overrides
+
+
 def build_blob(env):
     """Bloco de codificação (fábrica + mudanças de env.coding.extra); None se não há mudança (o HMI usa a codificação padrão dele)."""
-    extra = (env.get('coding') or {}).get('extra') or {}
+    coding = env.get('coding') or {}
+    extra = coding.get('extra') or {}
     fs = fields(env)
     blob = default_blob(env)
     n = 0
     for name, v in extra.items():
         f = fs.get(name)
         if not f:
+            if coding.get('hu_capture_imported'):
+                raise ValueError('O dicionário não tem o parâmetro importado %s.' % name)
             continue
         blob[f['pos']] = (blob[f['pos']] & ~f['mask'] & 0xff) | ((int(v) << f['shift']) & f['mask'])
         n += 1

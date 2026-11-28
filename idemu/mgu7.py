@@ -1,6 +1,6 @@
 """iDrive 7 (MGU, x86-64 Linux): monta a raiz do RSE a partir da PSdZData e roda QEMU x86-64 (TCG) + glhost7.
 O HMI do banco traseiro (HmiMain3D, RSE_HIGH_LEFT) desenha pela ponte GL (ttyS1) e recebe toque pela serial ttyS0 (idemu-wl -> wl_pointer). Detalhes em docs/OUTRAS_GERACOES.md (parte 6)."""
-import glob, mmap, os, re, shutil, socket, struct, subprocess, sys, threading, time, zlib
+import glob, json, mmap, os, re, shutil, socket, struct, subprocess, sys, tempfile, threading, time, zlib
 from . import runtime, coding7, ipc
 
 IS_WIN = ipc.IS_WIN                  # Windows nativo: QEMU/glhost7 por TCP em 127.0.0.1, memória compartilhada nomeada, imagem com symlinks/modos num sidecar (ver docs/WINDOWS.md)
@@ -117,6 +117,26 @@ def pick(psdz, sid, ver=None):
     return fs[-1]
 def required_packages(psdz):
     return [pick(psdz, '0000' + i, APP_VER) for i in APP_IDS + DATA_IDS] + [pick(psdz, KERNEL_PKG, KERNEL_VER)]
+
+
+def hu_coding_schema(psdz):
+    """Get the HU coding dictionary before creating the first VM or building the disk."""
+    if image_ready() and coding7.available():
+        return coding7.load()[0]
+    package = pick(psdz, '0000567a', APP_VER)
+    if not package.endswith('.' + APP_VER):
+        raise ValueError('A versão do HMI não corresponde ao dicionário de codificação do iDrive 7.')
+    with tempfile.TemporaryDirectory(prefix='idemu-coding7-') as work:
+        binary = os.path.join(work, 'usr', 'bin', 'HmiMain3D')
+        output = os.path.join(work, 'coding7.json')
+        extracted = _run(_py() + [TOOLS + '/har.py', package, work, r'^/usr/bin/HmiMain3D$'])
+        if extracted.returncode or not os.path.isfile(binary):
+            raise ValueError('Não foi possível extrair o HMI para validar a codificação.')
+        generated = _run(_py() + [TOOLS + '/gen_coding7.py', binary, output])
+        if generated.returncode:
+            raise ValueError('Não foi possível extrair o dicionário de codificação do iDrive 7.')
+        with open(output, encoding='utf-8') as f:
+            return json.load(f)
 
 def build(psdz, log=print, progress=lambda p, s: None):
     """Extrai app + data (HAR) para uma pasta de trabalho, aplica o overlay do IDEmu, os patches e grava mgu7/root.img + mgu7/bzImage (≈ 3,3 GB temporários)."""
@@ -248,6 +268,14 @@ class Mgu7Runtime(runtime.Runtime):
         self._cold = bool(cold)
         if not image_ready(): raise RuntimeError('imagem do iDrive 7 não montada')
         find_qemu()
+        imported = (self.env.get('coding') or {}).get('hu_capture_imported', False)
+        try:
+            self.coding_blob = coding7.build_blob(self.env) if imported or coding7.available() else None
+        except Exception as e:
+            if imported:
+                raise RuntimeError('A codificação importada não pôde ser aplicada: %s' % e) from e
+            self.coding_blob = None
+            print('codificação do iDrive 7:', e)
         for d in (self.run, self.logd): os.makedirs(d, exist_ok=True)
         if IS_WIN:                  # sem sockets em arquivo: portas novas a cada partida (os .port guardam as antigas), e o mapeamento do quadro antigo solto antes de apagá-lo
             m, self._fm = self._fm, None; self._fm_key = None
@@ -260,8 +288,6 @@ class Mgu7Runtime(runtime.Runtime):
         if IS_WIN: self.mon_path = ipc.addr(self.run, 'mon.sock')
         self.state = 'booting'; self.err = None; self.t0 = time.time(); self.boot_kind = 'cold'; self.stop_ev.clear(); self.marks = {}; self._fm = None; self._lastseq = None
         self.wl_ready.clear()
-        try: self.coding_blob = coding7.build_blob(self.env) if coding7.available() else None       # codificação alterada pelo usuário (None = a padrão do HMI)
-        except Exception as e: self.coding_blob = None; print('codificação do iDrive 7:', e)
         self.step = 'Iniciando o renderizador'; self.pct = 2
         threading.Thread(target=self._boot_thread, daemon=True).start()
     def _mark(self, name): self.marks[name] = round(time.time() - self.t0, 1)
