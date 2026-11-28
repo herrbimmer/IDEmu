@@ -1,7 +1,8 @@
 """iDrive 7: partes que não precisam do firmware (quadro RGBA do glhost7, pacotes, overlay)."""
 import os, struct, sys, tempfile, unittest
+from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from idemu import mgu7
+from idemu import coding7, mgu7
 
 
 class FrameTest(unittest.TestCase):
@@ -97,11 +98,12 @@ class PatchTest(unittest.TestCase):
                 d = bytearray(b'\0' * (max(ns['PATCHES'][rel]) + 16))
                 for o in ns['PATCHES'][rel]: d[o:o + 4] = bytes.fromhex('4883ec28')
                 open(os.path.join(tmp, rel), 'wb').write(d)
-            r = subprocess.run([sys.executable, '-I', os.path.join(mgu7.TOOLS, 'patch_rse.py'), tmp], capture_output=True, text=True)
+            cmd = [sys.executable, '-X', 'utf8', '-I', os.path.join(mgu7.TOOLS, 'patch_rse.py'), tmp]
+            r = subprocess.run(cmd, capture_output=True, encoding='utf-8')
             self.assertEqual(r.returncode, 0, r.stderr)
             out = open(os.path.join(tmp, 'usr', 'bin', 'HmiMain3D'), 'rb').read()
             for rel, off, old, new in ns['HMI_PATCHES']: self.assertEqual(out[off:off + len(new)], new)
-            r = subprocess.run([sys.executable, '-I', os.path.join(mgu7.TOOLS, 'patch_rse.py'), tmp], capture_output=True, text=True)
+            r = subprocess.run(cmd, capture_output=True, encoding='utf-8')
             self.assertNotEqual(r.returncode, 0)                                  # já alterado: os bytes não batem mais
 
 
@@ -145,6 +147,65 @@ class RoleTest(unittest.TestCase):
                 e = app.create({'kind': 'mgu7', 'name': 'b', 'role': 'rse'}); self.assertEqual((e['role'], e['coding']['display']), ('rse', '1920x1080'))
                 with self.assertRaises(server.ApiError): app.create({'kind': 'mgu7', 'name': 'c', 'role': 'x'})
             finally: server.ENVS, catalog.psdz_ok, catalog.load_settings, catalog.packages_ok = old
+
+
+class HuCodingCaptureTest(unittest.TestCase):
+    SCHEMA = {
+        'areas': [{'id': 0x3005, 'name': 'APIX_CID_UND_ZIN', 'hu': [0, 2], 'rse': [3, 2]}],
+        'params': [
+            {'name': 'CID_TOUCH', 'area': 0x3005, 'start': 0, 'end': 0, 'mask': 1, 'vals': [[0, 'off'], [1, 'on']]},
+            {'name': 'CID_REGION', 'area': 0x3005, 'start': 0, 'end': 0, 'mask': 6, 'vals': [[0, 'ece'], [2, 'china']]},
+        ],
+        'blob': {'hu': '0100'},
+    }
+
+    def capture(self, field_value=4, state=0x09):
+        raw = bytearray(coding7.CAPTURE_SIZE)
+        raw[coding7.STATUS_OFFSET] = state
+        raw[coding7.DATA_OFFSET] = field_value
+        raw[coding7.DATA_OFFSET + 1] = 0xff  # not described by the HMI dictionary
+        return bytes(raw)
+
+    def test_rejects_inactive_and_malformed_captures(self):
+        for value in (self.capture(state=0x08).hex(), 'd0', 'x' * (2 * coding7.CAPTURE_SIZE), 123):
+            with self.subTest(value=type(value)), self.assertRaises(ValueError):
+                coding7.parse_hu_capture(value)
+
+    def test_hu_offsets_and_explicit_zero(self):
+        raw = coding7.parse_hu_capture(self.capture().hex())
+        self.assertEqual(coding7.hu_capture_overrides(raw, self.SCHEMA), {'CID_TOUCH': 0, 'CID_REGION': 2})
+        with self.assertRaisesRegex(ValueError, 'CID_REGION'):
+            coding7.hu_capture_overrides(self.capture(field_value=2), self.SCHEMA)
+
+    def test_create_imports_without_persisting_the_capture(self):
+        from idemu import catalog, server
+        with tempfile.TemporaryDirectory() as tmp, patch.object(server, 'ENVS', tmp), \
+                patch.object(catalog, 'packages_ok', return_value=True), \
+                patch.object(catalog, 'effective_psdz', return_value=tmp), \
+                patch.object(mgu7, 'hu_coding_schema', return_value=self.SCHEMA) as schema:
+            app = server.App()
+            normal = app.create({'kind': 'mgu7', 'name': 'default'})
+            self.assertEqual(normal['coding']['extra'], coding7.DEFAULT_HU)
+            request = {'kind': 'mgu7', 'name': 'import', 'hu_coding_capture': self.capture().hex()}
+            with self.assertRaises(server.ApiError):
+                app.create(dict(request, role='rse'))
+            with self.assertRaises(server.ApiError):
+                app.create(dict(request, hu_coding_capture=self.capture(field_value=2).hex()))
+            self.assertFalse(os.path.exists(os.path.join(tmp, 'import')))
+            env = app.create(request)
+            self.assertEqual(app.load_env(env['id'])['coding']['extra'], {'CID_TOUCH': 0, 'CID_REGION': 2})
+            self.assertTrue(env['coding']['hu_capture_imported'])
+            self.assertNotIn('hu_coding_capture', app.load_env(env['id']))
+            self.assertEqual(schema.call_count, 2)
+
+    def test_start_reports_an_unavailable_imported_coding_dictionary(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(mgu7, 'image_ready', return_value=True), \
+                patch.object(mgu7, 'find_qemu'), patch.object(coding7, 'build_blob', side_effect=ValueError('sem dicionário')):
+            env = {'id': 'test-id7-import', 'role': 'hu', 'coding': {'hu_capture_imported': True}}
+            runtime = mgu7.Mgu7Runtime(tmp, env)
+            with self.assertRaisesRegex(RuntimeError, 'sem dicionário'):
+                runtime.start()
+            self.assertEqual(runtime.state, 'stopped')
 
 
 class FakeServicesTest(unittest.TestCase):

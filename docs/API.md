@@ -72,6 +72,8 @@ POST /api/env/<id>/files/reveal {"path":"..."} -> abre no Finder        POST /ap
 Os caminhos são sempre relativos à pasta extraída: `..`, caminhos absolutos e links simbólicos que saiam dela são recusados.
 
 ## Coding
+Ao criar um ambiente `kind: "mgu7"`, `role: "hu"`, `POST /api/env/create` aceita `hu_coding_capture`: o conteúdo de uma captura válida de `rawcodingdata` em hexadecimal (4144 bytes antes da conversão). Use uma captura da mesma versão de HMI. O servidor valida a captura antes de criar o ambiente e só grava as diferenças dos campos reconhecidos em `coding.extra`. Um CAFD é a descrição dos parâmetros e um NCD é outro formato de dados. A importação usa a captura de memória do HU. Sem captura, a configuração genérica do IDEmu é usada.
+
 GET  /api/env/<id>/coding -> (iDrive 5/6, 7 e 8; no 7 e no 8 os parâmetros vêm do firmware, `coding.extra` guarda só o que difere da fábrica) {"params":[{name,label,desc,popular,group,bits,max,options:[{value,raw,label}],factory,value,coded}],"groups":[{id,label}],"popular_order":[...],"popular_groups":[...],"backups":[...],"running":bool,"flash":{...}}
 POST /api/env/<id>/coding/flash {"changes":{"COMPASS":1,"language":"en_GB","X":null},"note":"..."} | {"reset":true} | {"restore":"<id do backup>"} -> estado do flash (assíncrono; null volta o parâmetro ao padrão)
 GET  /api/env/<id>/coding/flash -> {"state":"idle|running|done|error","step":n,"steps":[...],"error":...,"rows":n,"rows_read":n,"verified":bool,"backup":"id","restarted":bool,"warnings":[...]}

@@ -112,10 +112,23 @@ class App:
             role = d.get('role') or 'hu'
             if role not in ('hu', 'rse'): raise ApiError('tela do iDrive 7 desconhecida (use hu ou rse)')
             rse = role == 'rse'
+            extra = {} if rse else dict(coding7.DEFAULT_HU)
+            capture = d.get('hu_coding_capture')
+            if capture is not None:
+                if rse: raise ApiError('A importação de codificação só está disponível para a tela central do iDrive 7.')
+                try:
+                    raw = coding7.parse_hu_capture(capture)
+                    schema = mgu7.hu_coding_schema(catalog.effective_psdz('mgu7'))
+                    extra = coding7.hu_capture_overrides(raw, schema)
+                except (ValueError, OSError, RuntimeError) as e:
+                    raise ApiError(str(e)) from e
+                # A leitura do SWFL pode levar alguns segundos. O ID é reservado ao salvar.
+                eid = self._free_id(slug(name), d.get('home'))
             env = {'id': eid, 'name': name, 'created': datetime.datetime.now().isoformat(timespec='seconds'), 'kind': 'mgu7', 'role': role, 'series': 'RSE' if rse else 'HU', 'chassis': 'RSE' if rse else 'HU', 'brand': 'bmw',
                    'model_name': d.get('model_name') or ('BMW RSE (banco traseiro)' if rse else 'BMW iDrive 7 (tela central)'), 'swfl': {},
                    'coding': {'language': 'en_GB', 'units': 'metric', 'country': 'GB', 'vin': dvin, 'display': '1920x1080' if rse else '1920x720', 'hmi_version': 'id7', 'navi': '',
-                              'extra': {} if rse else dict(coding7.DEFAULT_HU)}, 'net': {}}
+                              'extra': extra}, 'net': {}}
+            if capture is not None: env['coding']['hu_capture_imported'] = True
             return self._save_new(env, d.get('home'))
         if d.get('kind') == 'cic':
             if not catalog.packages_ok('cic'): raise ApiError('o CIC precisa dos pacotes swfl_000003a6 e swfl_00000417 (versão 008_090_002)')
