@@ -22,6 +22,7 @@
     o = o || {};
     const root = h('div', { class: 'pkg-panel' });
     let st = null, busy = false, last = null;
+    const isMgu22 = kind === 'mgu22';
     const setSt = (s) => { st = s; root.status = s; if (o.onChange) o.onChange(s); render(); };
     async function reload() { try { setSt(await api('/api/packages?' + IDE.qs({ kind }))); } catch (e) { toastErr(e); } }
     async function run(fn) { busy = true; render(); try { await fn(); } catch (e) { toastErr(e); } busy = false; render(); }
@@ -35,7 +36,7 @@
     }
     const startDir = () => (last && last.scan) || IDE.state.settings.psdz_path || undefined;
     async function scan() {
-      const n = await pickNative('folder', IDE.t('Escolha uma pasta que contenha os arquivos swfl_… (ela e as subpastas são varridas)'), startDir());
+      const n = await pickNative('folder', IDE.t(isMgu22 ? 'Escolher a pasta com os arquivos' : 'Escolha uma pasta que contenha os arquivos swfl_… (ela e as subpastas são varridas)'), startDir());
       let path = n.native ? n.r.path : null;
       if (!n.native) { const r = await IDE.pickPath({ mode: 'dir', start: startDir(), title: IDE.t('Escolher a pasta com os arquivos') }); path = r && r.path; }
       if (!path) return;
@@ -47,10 +48,10 @@
       });
     }
     async function pickMany() {
-      const n = await pickNative('files', IDE.t('Selecione os arquivos swfl_… (use ⌘ ou Shift para vários)'), startDir());
+      const n = await pickNative('files', IDE.t(isMgu22 ? 'Escolher vários arquivos…' : 'Selecione os arquivos swfl_… (use ⌘ ou Shift para vários)'), startDir());
       let paths = [];
       if (n.native) paths = n.r.paths || [];
-      else { const r = await IDE.pickPath({ mode: 'file', start: startDir(), title: IDE.t('Escolher arquivo'), hint: 'swfl_*.bin.*' }); paths = r ? [r.path] : []; }
+      else { const r = await IDE.pickPath({ mode: 'file', start: startDir(), title: IDE.t('Escolher arquivo'), hint: isMgu22 ? 'swfl_*.bin.* / swfk_*.bin.*' : 'swfl_*.bin.*' }); paths = r ? [r.path] : []; }
       await sendPaths(paths);
     }
     async function pickOne(it) {

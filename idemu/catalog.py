@@ -1,5 +1,5 @@
 """Catálogo do PSDZData: séries, chassis, pacotes SWFL necessários e versões disponíveis."""
-import os, re, json, glob, threading
+import os, re, json, glob, tempfile, threading
 from . import codegen, hostos
 
 SETTINGS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'settings.json')
@@ -131,29 +131,39 @@ GENERATIONS = [
 ]
 for _g in GENERATIONS: _g['level'] = level_of(_g['id'])
 
-def scan_folder(root, wanted, max_depth=7, max_seconds=25):
+def scan_folder(root, wanted, max_depth=7, max_seconds=25, *, prefixes=None):
     # Procura em root arquivos swfl_<id>.bin.<versão> (ids em wanted): raiz do psdzdata, pasta swe/swfl ou qualquer pasta que os contenha.
     # Devolve {id: [arquivos]} (mais novo primeiro) e quantas pastas foram varridas.
     import time as _t
-    rx = re.compile(r'^swfl_([0-9a-fA-F]{8})\.bin\.(\d{3}_\d{3}_\d{3})$')
+    prefixes = prefixes or {w.lower(): 'swfl' for w in wanted}
     want = {w.lower() for w in wanted}
     found = {w: [] for w in want}; seen = set()
     root = os.path.abspath(os.path.expanduser(root))
     t_end = _t.time() + max_seconds; scanned = 0
     def add(path):
-        n = os.path.basename(path); m = rx.match(n)
-        if not m or m.group(1).lower() not in want or path in seen: return
+        n = os.path.basename(path); m = PACKAGE_RX.fullmatch(n)
+        if not m or prefixes.get(m['id'].lower()) != m['prefix'] or path in seen: return
+        if not os.path.isfile(path): return
         try: size = os.path.getsize(path)
         except OSError: return
-        seen.add(path); found[m.group(1).lower()].append({'file': n, 'version': m.group(2), 'size': size, 'path': path})
+        seen.add(path); found[m['id'].lower()].append({'file': n, 'version': m['version'], 'size': size, 'path': path})
     # atalhos prováveis primeiro; depois varredura limitada
-    for sub in ('', 'swe/swfl', 'psdzdata/swe/swfl', 'swfl'):
+    dirs = [''] + [os.path.join(base, prefix)
+                   for prefix in dict.fromkeys(prefixes.values())
+                   for base in ('swe', 'psdzdata/swe', '')]
+    for sub in dirs:
         d = os.path.join(root, sub)
         if os.path.isdir(d):
             try:
                 for n in os.listdir(d): add(os.path.join(d, n))
             except OSError: pass
-    if not any(found.values()):
+    needs_walk = not any(found.values())
+    if 'swfk' in prefixes.values():
+        needs_walk = not any(
+            all(any(f['version'] == version for f in matches) for matches in found.values())
+            for version in MGU22_VERSIONS
+        )
+    if needs_walk:
         stack = [(root, 0)]
         while stack and _t.time() < t_end:
             d, depth = stack.pop(); scanned += 1
@@ -193,13 +203,15 @@ def build_catalog(psdz):
 
 # ---------------------------------------------------------------- pacotes SWFL exigidos por geração (CIC, iDrive 7 e 8)
 # O usuário pode apontar a PSdZData inteira, escolher os arquivos um a um ou mandar o app procurar numa pasta.
-# Os arquivos escolhidos ficam como links em packages/swe/swfl (o "estágio"), que tem o mesmo formato de uma PSdZData para os montadores.
+# Os arquivos escolhidos ficam em packages/swe (o estágio), no mesmo formato da PSdZData.
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STAGE = os.path.join(ROOT_DIR, 'packages')
 MGU22_VER = '007_034_003'
+MGU22_VERSIONS = (MGU22_VER, '007_023_004')
+PACKAGE_RX = re.compile(r'(?P<prefix>swfl|swfk)_(?P<id>[0-9a-fA-F]{8})\.bin\.(?P<version>\d{3}_\d{3}_\d{3})')
 SWFL_RX = re.compile(r'^swfl_([0-9a-fA-F]{8})\.bin\.(\d{3}_\d{3}_\d{3})$')
 
-def required_packages(kind):
+def required_packages(kind, version=MGU22_VER):
     # [{id, version, label, help, role}] dos pacotes que a geração precisa
     from . import cic, mgu7
     if kind == 'cic':
@@ -211,9 +223,17 @@ def required_packages(kind):
         out.append({'id': mgu7.KERNEL_PKG, 'version': mgu7.KERNEL_VER, 'label': 'Kernel do Linux', 'role': 'kernel', 'help': 'Núcleo do sistema do iDrive 7'})
         return out
     if kind == 'mgu22':
-        return [{'id': '00009ff7', 'version': MGU22_VER, 'label': 'Kernel e sistema base', 'role': 'kernel', 'help': 'Imagem de boot e raiz do iDrive 8', 'approx_mb': 0},
-                {'id': '00009fc6', 'version': MGU22_VER, 'label': 'HMI (IVI)', 'role': 'hmi', 'help': 'Interface do iDrive 8 e tabela de codificação'},
-                {'id': '00009ff9', 'version': MGU22_VER, 'label': 'Extras (EXT)', 'role': 'data', 'help': 'Dados adicionais do iDrive 8'}]
+        return [
+            dict(id=ident, prefix=prefix, version=version, label=label, role=role, help=help_text)
+            for ident, prefix, label, role, help_text in (
+                ('00009ff7', 'swfl', 'Kernel e sistema base', 'kernel', 'Imagem de boot e raiz do iDrive 8'),
+                ('00009fc6', 'swfl', 'HMI (IVI)', 'hmi', 'Interface do iDrive 8 e tabela de codificação'),
+                ('00009ff9', 'swfl', 'Extras (EXT)', 'data', 'Dados adicionais do iDrive 8'),
+                ('0000a6b1', 'swfk', 'Dados da marca BMW', 'data', 'Recursos da marca BMW'),
+                ('0000a6b0', 'swfk', 'Dados compartilhados BMW', 'data', 'Recursos compartilhados BMW'),
+                ('0000a6a6', 'swfk', 'Dados do veículo G70BEV', 'data', 'Recursos do BMW i7 G70'),
+            )
+        ]
     return []
 
 def _search_dirs(kind, psdz):
@@ -223,9 +243,47 @@ def _search_dirs(kind, psdz):
     if kind == 'cic': dirs.append(os.path.expanduser('~/Downloads/System files/ID4'))
     return dirs
 
+def _package_name(item):
+    return '{prefix}_{id}.bin.{version}'.format(**item)
+
+
+def _mgu22_files(root, version, ids=None):
+    return [(item, os.path.join(root, 'swe', item['prefix'], _package_name(item)))
+            for item in required_packages('mgu22', version) if ids is None or item['id'] in ids]
+
+
+def mgu22_firmware(psdz, *, ids=None, include_staged=True):
+    # The first complete set wins. For a partial set, report the closest match.
+    roots = [psdz, os.path.join(psdz, 'psdzdata')] if psdz else []
+    if include_staged or not roots:
+        roots.append(STAGE)
+    candidates = [(root, version, _mgu22_files(root, version, ids))
+                  for root in roots for version in MGU22_VERSIONS]
+    return max(candidates, key=lambda candidate: sum(os.path.isfile(path) for _, path in candidate[2]))
+
+
+def _mgu22_package_status(psdz):
+    root, version, files = mgu22_firmware(psdz)
+    items = []
+    for item, path in files:
+        found = os.path.isfile(path)
+        others = [] if found else sorted(
+            os.path.basename(p) for p in glob.glob(glob.escape(path.rsplit('.', 1)[0]) + '.*')
+            if os.path.isfile(p)
+        )
+        items.append(dict(item, file=_package_name(item), found=found, other=others,
+                          path=os.path.realpath(path) if found else None,
+                          size=os.path.getsize(path) if found else 0,
+                          source=('escolhido' if root == STAGE else 'psdz') if found else None))
+    have = sum(i['found'] for i in items)
+    return {'kind': 'mgu22', 'ok': have == len(items), 'version': version, 'items': items,
+            'have': have, 'total': len(items)}
+
+
 def package_status(kind, psdz=None):
     # estado de cada pacote exigido: encontrado (onde) ou faltando; ok = todos encontrados
     if psdz is None: psdz = load_settings().get('psdz_path')
+    if kind == 'mgu22': return _mgu22_package_status(psdz)
     items = []
     for r in required_packages(kind):
         name = 'swfl_%s.bin.%s' % (r['id'], r['version']); it = dict(r, file=name, found=False, path=None, size=0, source=None, other=[])
@@ -241,11 +299,59 @@ def package_status(kind, psdz=None):
 
 def packages_ok(kind): return package_status(kind)['ok']
 
+def _stage_mgu22(path):
+    match = PACKAGE_RX.fullmatch(os.path.basename(path))
+    if not match:
+        return False, 'o nome do arquivo precisa ser swfl_<id>.bin.<versão> ou swfk_<id>.bin.<versão>'
+    items = {item['id']: item for item in required_packages('mgu22', match['version'])}
+    item = items.get(match['id'].lower())
+    if not item or item['prefix'] != match['prefix']:
+        return False, 'este arquivo não é usado por esta versão do iDrive'
+    if match['version'] not in MGU22_VERSIONS:
+        return False, 'versão %s: o IDEmu precisa da %s' % (match['version'], ' / '.join(MGU22_VERSIONS))
+    folder = os.path.join(STAGE, 'swe', item['prefix'])
+    dst = os.path.join(folder, _package_name(item))
+    try:
+        if os.path.isfile(dst) and os.path.samefile(path, dst):
+            return True, 'ok'
+        os.makedirs(folder, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=folder) as tmp:
+            pending = os.path.join(tmp, os.path.basename(dst))
+            hostos.link_path(path, pending)
+            os.replace(pending, dst)
+    except OSError as e:
+        return False, 'não consegui gravar o link: %s' % e
+    return True, 'ok'
+
+
+def stage_mgu22_folder(root):
+    prefixes = {item['id']: item['prefix'] for item in required_packages('mgu22')}
+    scan = scan_folder(root, prefixes, prefixes=prefixes)
+    versions = []
+    for version in MGU22_VERSIONS:
+        available = 0
+        selected = []
+        for item, staged_path in _mgu22_files(STAGE, version):
+            if os.path.isfile(staged_path):
+                available += 1
+            else:
+                path = next((f['path'] for f in scan['files'][item['id']] if f['version'] == version), None)
+                if path:
+                    available += 1
+                    selected.append(path)
+        versions.append((available, selected))
+    _, files = max(versions, key=lambda candidate: (candidate[0], bool(candidate[1])))
+    staged = sum(_stage_mgu22(path)[0] for path in files)
+    return dict(package_status('mgu22'), scanned_path=root, scanned=scan['scanned'],
+                timeout=scan['timeout'], staged=staged)
+
+
 def stage_file(path, kind):
     # liga um arquivo escolhido no estágio; devolve (ok, mensagem). O nome precisa ser o de um pacote exigido
     path = os.path.abspath(os.path.expanduser(path or ''))
-    n = os.path.basename(path); m = SWFL_RX.match(n)
     if not os.path.isfile(path): return False, 'arquivo inexistente'
+    if kind == 'mgu22': return _stage_mgu22(path)
+    n = os.path.basename(path); m = SWFL_RX.match(n)
     if not m: return False, 'o nome do arquivo precisa ser swfl_<id>.bin.<versão>'
     want = {r['id']: r['version'] for r in required_packages(kind)}
     sid = m.group(1).lower()
@@ -262,6 +368,7 @@ def stage_file(path, kind):
 def effective_psdz(kind):
     # pasta no formato PSdZData que os montadores leem: a PSdZData salva se tem tudo, senão o estágio (links)
     psdz = load_settings().get('psdz_path')
+    if kind == 'mgu22': return mgu22_firmware(psdz)[0]
     st = package_status(kind, psdz)
     if psdz and all(os.path.exists(os.path.join(psdz, 'swe', 'swfl', i['file'])) for i in st['items']): return psdz
     d = os.path.join(STAGE, 'swe', 'swfl'); os.makedirs(d, exist_ok=True)

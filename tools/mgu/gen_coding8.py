@@ -69,10 +69,12 @@ def from_psdz(psdz, out):
             t = e.inode(e.lookup(p))
         with open(dst, 'wb') as f:
             f.write(e.data(t))
+    _, _, files = B.catalog.mgu22_firmware(psdz, ids={'00009ff7', '00009fc6'}, include_staged=False)
+    packages = {item['id']: path for item, path in files}
     with tempfile.TemporaryDirectory(prefix='coding8', dir=os.path.dirname(B.OUT)) as d:
-        for pkg, member, raw, src, dst in (('swfl_00009ff7', 'mgu22-bmw-image-mgu22-sa8155.ext4.simg.bin.gz', 'root', '/usr/share/sysfunc/coding/cafd_mgu_02_a.bin', 'cafd.bin'),
-                                           ('swfl_00009fc6', 'mgu22-ivi-sa8155.ext4.simg.bin.gz', 'ivi', '/rootfs/usr/share/hmi/data/ro/MGU22_Coding.txt', 'coding.txt')):
-            B.member(os.path.join(psdz, 'swe/swfl', '%s.bin.%s' % (pkg, B.VER)), member, d + '/x.gz')
+        for pkg, member, raw, src, dst in (('00009ff7', 'mgu22-bmw-image-mgu22-sa8155.ext4.simg.bin.gz', 'root', '/usr/share/sysfunc/coding/cafd_mgu_02_a.bin', 'cafd.bin'),
+                                           ('00009fc6', 'mgu22-ivi-sa8155.ext4.simg.bin.gz', 'ivi', '/rootfs/usr/share/hmi/data/ro/MGU22_Coding.txt', 'coding.txt')):
+            B.member(packages[pkg], member, d + '/x.gz')
             B.simg(d + '/x.gz', d + '/%s.raw' % raw)
             os.unlink(d + '/x.gz')
             e4 = E4(d + '/%s.raw' % raw)
