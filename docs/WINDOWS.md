@@ -39,7 +39,8 @@ Para montar somente o guest do iDrive 8, pode-se definir `IDEMU_MGU_ZIG` com o c
 
 O que o primeiro teste real corrigiu (já no código): extração dos QEMU sem symlink (`--exclude` de `roms/` e `tests/lcitool`, `scripts/symlink-install-tree.py` neutralizado), `libfdt` interno (o MSYS2 MINGW64 não tem o pacote `dtc`), `memory-backend-winshm` registrado no esquema QAPI (`qapi/qom.json`, senão `-object` o recusa), `con.sock` renomeado para `cons.sock` (`CON` é dispositivo reservado no Windows e abrir `con.sock.port` lia o teclado), `longjmp` do `glhost7` trocado pelos built-ins do GCC (o do UCRT quebrava com violação de acesso), caminhos do guest sempre com `posixpath`, pasta de trabalho curta `C:\iw\<ambiente>` na compilação do iDrive 5/6 (os SWFL têm caminhos de ~200 caracteres e o limite do Windows é 260), e ponteiros de 64 bits no `glhost`.
 
-Riscos que ainda existem: a detecção de canais do `mguhost` por `QueryWorkingSetEx` (se falhar, ele varre os 12 GiB) nunca foi exercitada com um guest real; ANGLE/D3D11 no lugar do Metal só foi testado até a inicialização; shaders do iDrive 7 em GPUs Intel/NVIDIA (testado só com AMD Radeon); e os patches do CIC dependem do texto exato do QEMU 11.1.2.
+No teste G70 com firmware 007_023_004, o mguhost encontrou os canais do guest e apresentou a HMI com ANGLE/D3D11. WHPX em Windows ARM64 e outras combinações de GPU e firmware ainda precisam de testes.
+
 ## Requisitos
 
 * Windows 10 (build 17134 / versão 1803 ou mais novo, por causa dos sockets) ou Windows 11, 64 bits.
